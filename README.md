@@ -155,7 +155,6 @@ terminalchess/
 ├── chess.py              # Main client/game logic
 ├── server.py             # Multiplayer server
 ├── database.json         # User data & game history
-├── database_empty.json   # Empty database template
 ├── README.md             # This file
 ├── .venv/                # Virtual environment
 └── .idea/                # IDE configuration
