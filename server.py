@@ -57,6 +57,26 @@ MSG_GAME_DRAW_OFFER = 'GAME_DRAW_OFFER'
 MSG_GAME_DRAW_ACCEPT = 'GAME_DRAW_ACCEPT'
 MSG_GAME_CHAT = 'GAME_CHAT'
 
+# Friend system message types
+MSG_FRIEND_REQUEST = 'FRIEND_REQUEST'
+MSG_FRIEND_RESPONSE = 'FRIEND_RESPONSE'
+MSG_FRIEND_LIST = 'FRIEND_LIST'
+MSG_FRIEND_REMOVE = 'FRIEND_REMOVE'
+MSG_FRIEND_STATUS = 'FRIEND_STATUS'
+
+# Messaging system message types
+MSG_KEY_EXCHANGE = 'KEY_EXCHANGE'
+MSG_SEND_MESSAGE = 'SEND_MESSAGE'
+MSG_GET_MESSAGES = 'GET_MESSAGES'
+MSG_NEW_MESSAGE_NOTIFY = 'NEW_MESSAGE_NOTIFY'
+MSG_MESSAGES_DELETED = 'MESSAGES_DELETED'
+
+# Challenge system message types
+MSG_CHALLENGE_SEND = 'CHALLENGE_SEND'
+MSG_CHALLENGE_RESPONSE = 'CHALLENGE_RESPONSE'
+MSG_CHALLENGE_LIST = 'CHALLENGE_LIST'
+MSG_CHALLENGE_CANCEL = 'CHALLENGE_CANCEL'
+
 # Response types
 RESP_SUCCESS = 'SUCCESS'
 RESP_ERROR = 'ERROR'
@@ -80,7 +100,14 @@ class DatabaseManager:
     def _init_db(self):
         """Initialize database file if it doesn't exist."""
         if not os.path.exists(self.db_file):
-            self._save_db({"users": {}, "game_history": []})
+            self._save_db({
+                "users": {},
+                "game_history": [],
+                "friend_requests": [],
+                "friendships": [],
+                "messages": [],
+                "challenges": []
+            })
     
     def _load_db(self):
         """Load database from file."""
@@ -383,6 +410,313 @@ class DatabaseManager:
             # Sort by ELO descending
             users.sort(key=lambda x: (-x['elo'], -x['games']))
             return users[:limit]
+
+    # ════════════════════════════════════════════════════════════════════
+    #  FRIEND SYSTEM METHODS
+    # ════════════════════════════════════════════════════════════════════
+    def send_friend_request(self, sender, recipient):
+        """Send a friend request."""
+        with self.lock:
+            db = self._load_db()
+            
+            # Validate users exist
+            if sender not in db['users'] or recipient not in db['users']:
+                return False, "User not found"
+            
+            if sender == recipient:
+                return False, "Cannot send friend request to yourself"
+            
+            # Check if already friends
+            for friendship in db['friendships']:
+                if (friendship['user1'] == sender and friendship['user2'] == recipient) or \
+                   (friendship['user1'] == recipient and friendship['user2'] == sender):
+                    return False, "Already friends"
+            
+            # Check for existing request
+            for req in db['friend_requests']:
+                if (req['sender'] == sender and req['recipient'] == recipient):
+                    return False, "Friend request already sent"
+            
+            # Create friend request
+            friend_request = {
+                'id': len(db['friend_requests']) + 1,
+                'sender': sender,
+                'recipient': recipient,
+                'created_at': datetime.now().isoformat(),
+                'status': 'pending'
+            }
+            db['friend_requests'].append(friend_request)
+            self._save_db(db)
+            return True, "Friend request sent"
+
+    def respond_to_friend_request(self, sender, recipient, accept):
+        """Respond to a friend request."""
+        with self.lock:
+            db = self._load_db()
+            
+            # Find the request
+            request_found = None
+            for req in db['friend_requests']:
+                if req['sender'] == sender and req['recipient'] == recipient:
+                    request_found = req
+                    break
+            
+            if not request_found:
+                return False, "Friend request not found"
+            
+            if accept:
+                # Create friendship
+                friendship = {
+                    'id': len(db['friendships']) + 1,
+                    'user1': sender,
+                    'user2': recipient,
+                    'created_at': datetime.now().isoformat()
+                }
+                db['friendships'].append(friendship)
+            
+            # Remove the request
+            db['friend_requests'] = [r for r in db['friend_requests'] if r != request_found]
+            self._save_db(db)
+            
+            if accept:
+                return True, "Friend request accepted"
+            return True, "Friend request declined"
+
+    def get_friend_requests(self, username):
+        """Get pending friend requests for a user."""
+        with self.lock:
+            db = self._load_db()
+            requests = []
+            for req in db['friend_requests']:
+                if req['recipient'] == username and req['status'] == 'pending':
+                    requests.append({
+                        'id': req['id'],
+                        'sender': req['sender'],
+                        'created_at': req['created_at']
+                    })
+            return requests
+
+    def get_friends(self, username):
+        """Get list of friends for a user."""
+        with self.lock:
+            db = self._load_db()
+            friends = []
+            for friendship in db['friendships']:
+                if friendship['user1'] == username:
+                    friends.append(friendship['user2'])
+                elif friendship['user2'] == username:
+                    friends.append(friendship['user1'])
+            return friends
+
+    def remove_friend(self, user1, user2):
+        """Remove a friendship."""
+        with self.lock:
+            db = self._load_db()
+            
+            for friendship in db['friendships']:
+                if (friendship['user1'] == user1 and friendship['user2'] == user2) or \
+                   (friendship['user1'] == user2 and friendship['user2'] == user1):
+                    db['friendships'].remove(friendship)
+                    self._save_db(db)
+                    return True, "Friend removed"
+            
+            return False, "Friendship not found"
+
+    def are_friends(self, user1, user2):
+        """Check if two users are friends."""
+        with self.lock:
+            db = self._load_db()
+            for friendship in db['friendships']:
+                if (friendship['user1'] == user1 and friendship['user2'] == user2) or \
+                   (friendship['user1'] == user2 and friendship['user2'] == user1):
+                    return True
+            return False
+
+    # ════════════════════════════════════════════════════════════════════
+    #  MESSAGING SYSTEM METHODS
+    # ════════════════════════════════════════════════════════════════════
+    def store_message(self, sender, recipient, encrypted_content, iv, tag):
+        """Store an encrypted message."""
+        with self.lock:
+            db = self._load_db()
+            
+            # Verify users are friends
+            if not self.are_friends(sender, recipient):
+                return False, "Users are not friends"
+            
+            message = {
+                'id': len(db['messages']) + 1,
+                'sender': sender,
+                'recipient': recipient,
+                'encrypted_content': encrypted_content,
+                'iv': iv,
+                'tag': tag,
+                'created_at': datetime.now().isoformat(),
+                'expires_at': (datetime.now().replace(hour=datetime.now().hour) + 
+                              __import__('datetime').timedelta(hours=12)).isoformat()
+            }
+            db['messages'].append(message)
+            self._save_db(db)
+            return True, message['id']
+
+    def get_messages(self, user1, user2, since_id=0):
+        """Get messages between two users."""
+        with self.lock:
+            db = self._load_db()
+            
+            # Verify users are friends
+            if not self.are_friends(user1, user2):
+                return []
+            
+            messages = []
+            for msg in db['messages']:
+                if ((msg['sender'] == user1 and msg['recipient'] == user2) or
+                    (msg['sender'] == user2 and msg['recipient'] == user1)):
+                    if msg['id'] > since_id:
+                        messages.append({
+                            'id': msg['id'],
+                            'sender': msg['sender'],
+                            'encrypted_content': msg['encrypted_content'],
+                            'iv': msg['iv'],
+                            'tag': msg['tag'],
+                            'created_at': msg['created_at']
+                        })
+            return messages
+
+    def cleanup_expired_messages(self):
+        """Remove messages older than 12 hours."""
+        with self.lock:
+            db = self._load_db()
+            now = datetime.now()
+            original_count = len(db['messages'])
+            
+            db['messages'] = [
+                msg for msg in db['messages']
+                if datetime.fromisoformat(msg['expires_at']) > now
+            ]
+            
+            if len(db['messages']) < original_count:
+                self._save_db(db)
+                return original_count - len(db['messages'])
+            return 0
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CHALLENGE SYSTEM METHODS
+    # ════════════════════════════════════════════════════════════════════
+    def send_challenge(self, challenger, challenged, color_choice='random', rated=True):
+        """Send a game challenge."""
+        with self.lock:
+            db = self._load_db()
+            
+            # Validate users exist
+            if challenger not in db['users'] or challenged not in db['users']:
+                return False, "User not found"
+            
+            if challenger == challenged:
+                return False, "Cannot challenge yourself"
+            
+            # Verify users are friends
+            if not self.are_friends(challenger, challenged):
+                return False, "Can only challenge friends"
+            
+            # Check for existing active challenge
+            for challenge in db['challenges']:
+                if challenge['status'] == 'pending':
+                    if ((challenge['challenger'] == challenger and challenge['challenged'] == challenged) or
+                        (challenge['challenger'] == challenged and challenge['challenged'] == challenger)):
+                        return False, "Pending challenge already exists"
+            
+            challenge = {
+                'id': len(db['challenges']) + 1,
+                'challenger': challenger,
+                'challenged': challenged,
+                'color_choice': color_choice,
+                'rated': rated,
+                'created_at': datetime.now().isoformat(),
+                'status': 'pending'
+            }
+            db['challenges'].append(challenge)
+            self._save_db(db)
+            return True, challenge['id']
+
+    def respond_to_challenge(self, challenger, challenged, accept):
+        """Respond to a challenge."""
+        with self.lock:
+            db = self._load_db()
+            
+            # Find the challenge
+            challenge_found = None
+            for challenge in db['challenges']:
+                if (challenge['challenger'] == challenger and 
+                    challenge['challenged'] == challenged and
+                    challenge['status'] == 'pending'):
+                    challenge_found = challenge
+                    break
+            
+            if not challenge_found:
+                return False, "Challenge not found"
+            
+            if accept:
+                challenge_found['status'] = 'accepted'
+                # Determine colors
+                import random
+                if challenge_found['color_choice'] == 'random':
+                    colors = ['white', 'black']
+                    random.shuffle(colors)
+                    challenge_found['challenger_color'] = colors[0]
+                    challenge_found['challenged_color'] = colors[1]
+                elif challenge_found['color_choice'] == 'white':
+                    challenge_found['challenger_color'] = 'white'
+                    challenge_found['challenged_color'] = 'black'
+                else:
+                    challenge_found['challenger_color'] = 'black'
+                    challenge_found['challenged_color'] = 'white'
+            else:
+                challenge_found['status'] = 'declined'
+            
+            self._save_db(db)
+            
+            if accept:
+                return True, {
+                    'challenge_id': challenge_found['id'],
+                    'challenger_color': challenge_found['challenger_color'],
+                    'challenged_color': challenge_found['challenged_color'],
+                    'rated': challenge_found['rated']
+                }
+            return True, "Challenge declined"
+
+    def get_challenges(self, username):
+        """Get pending challenges for a user."""
+        with self.lock:
+            db = self._load_db()
+            challenges = []
+            for challenge in db['challenges']:
+                if challenge['status'] == 'pending':
+                    if challenge['challenged'] == username or challenge['challenger'] == username:
+                        challenges.append({
+                            'id': challenge['id'],
+                            'challenger': challenge['challenger'],
+                            'challenged': challenge['challenged'],
+                            'color_choice': challenge['color_choice'],
+                            'rated': challenge['rated'],
+                            'created_at': challenge['created_at']
+                        })
+            return challenges
+
+    def cancel_challenge(self, challenger, challenged):
+        """Cancel a pending challenge."""
+        with self.lock:
+            db = self._load_db()
+            
+            for challenge in db['challenges']:
+                if (challenge['challenger'] == challenger and 
+                    challenge['challenged'] == challenged and
+                    challenge['status'] == 'pending'):
+                    challenge['status'] = 'cancelled'
+                    self._save_db(db)
+                    return True, "Challenge cancelled"
+            
+            return False, "Challenge not found"
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -752,6 +1086,10 @@ class ClientHandler:
         success, message = self.db.authenticate_user(username, password)
         if success:
             self.logged_in_user = username
+            # Track connected client
+            server = getattr(self, 'server', None)
+            if server:
+                server.connected_clients[username] = self
         self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
 
     def handle_auto_login(self, data):
@@ -762,6 +1100,10 @@ class ClientHandler:
         success, message = self.db.authenticate_user_with_hash(username, password_hash)
         if success:
             self.logged_in_user = username
+            # Track connected client
+            server = getattr(self, 'server', None)
+            if server:
+                server.connected_clients[username] = self
         self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
 
     def handle_get_profile(self, data):
@@ -952,12 +1294,287 @@ class ClientHandler:
         """Handle chat message."""
         if not self.logged_in_user or not self.matchmaking:
             return
-        
+
         game_id = data.get('game_id')
         message = data.get('message', '')
-        
+
         if game_id and message:
             self.matchmaking.send_chat(game_id, self.logged_in_user, message)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  FRIEND SYSTEM HANDLERS
+    # ════════════════════════════════════════════════════════════════════
+    def handle_friend_request(self, data):
+        """Handle sending a friend request."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        recipient = data.get('recipient', '').strip()
+        if not recipient:
+            self.send(RESP_ERROR, "Recipient required", False)
+            return
+
+        success, message = self.db.send_friend_request(self.logged_in_user, recipient)
+        self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
+
+    def handle_friend_response(self, data):
+        """Handle responding to a friend request."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        sender = data.get('sender', '').strip()
+        accept = data.get('accept', False)
+
+        if not sender:
+            self.send(RESP_ERROR, "Sender required", False)
+            return
+
+        success, message = self.db.respond_to_friend_request(sender, self.logged_in_user, accept)
+        self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
+
+        # Notify the sender
+        if success and accept:
+            # Find the sender's handler and notify
+            server = getattr(self, 'server', None)
+            if server and sender in server.connected_clients:
+                server.connected_clients[sender].send(MSG_FRIEND_RESPONSE, {
+                    'responder': self.logged_in_user,
+                    'accepted': True
+                })
+
+    def handle_friend_list(self, data):
+        """Handle getting friend list."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        friends = self.db.get_friends(self.logged_in_user)
+        # Get online status for each friend
+        server = getattr(self, 'server', None)
+        friend_status = []
+        for friend in friends:
+            friend_status.append({
+                'username': friend,
+                'online': friend in server.connected_clients if server else False
+            })
+        self.send(RESP_SUCCESS, {'friends': friend_status}, True)
+
+    def handle_friend_remove(self, data):
+        """Handle removing a friend."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        friend = data.get('friend', '').strip()
+        if not friend:
+            self.send(RESP_ERROR, "Friend username required", False)
+            return
+
+        success, message = self.db.remove_friend(self.logged_in_user, friend)
+        self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
+
+    def handle_friend_requests_list(self, data):
+        """Handle getting pending friend requests."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        requests = self.db.get_friend_requests(self.logged_in_user)
+        self.send(RESP_SUCCESS, {'requests': requests}, True)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  MESSAGING SYSTEM HANDLERS
+    # ════════════════════════════════════════════════════════════════════
+    def handle_key_exchange(self, data):
+        """Handle key exchange for E2E encryption."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        # Get the public key from the client
+        public_key = data.get('public_key')
+        key_type = data.get('key_type', 'dh')  # Diffie-Hellman
+        
+        if not public_key:
+            self.send(RESP_ERROR, "Public key required", False)
+            return
+
+        # Store the public key for this user (in a real implementation, this would be more secure)
+        server = getattr(self, 'server', None)
+        if server:
+            if not hasattr(server, 'user_keys'):
+                server.user_keys = {}
+            server.user_keys[self.logged_in_user] = public_key
+
+        # For now, just acknowledge the key exchange
+        # In a real implementation, the server would facilitate DH key exchange
+        self.send(RESP_SUCCESS, {
+            'message': 'Key exchange acknowledged',
+            'key_type': key_type
+        }, True)
+
+    def handle_send_message(self, data):
+        """Handle sending an encrypted message."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        recipient = data.get('recipient', '').strip()
+        encrypted_content = data.get('encrypted_content')
+        iv = data.get('iv')
+        tag = data.get('tag')
+
+        if not recipient or not encrypted_content:
+            self.send(RESP_ERROR, "Recipient and content required", False)
+            return
+
+        # Verify users are friends
+        if not self.db.are_friends(self.logged_in_user, recipient):
+            self.send(RESP_ERROR, "Can only message friends", False)
+            return
+
+        # Store the message
+        success, result = self.db.store_message(
+            self.logged_in_user, recipient, encrypted_content, iv, tag
+        )
+        
+        if not success:
+            self.send(RESP_ERROR, result, False)
+            return
+
+        # Try to notify the recipient if they're online
+        server = getattr(self, 'server', None)
+        if server and recipient in server.connected_clients:
+            server.connected_clients[recipient].send(MSG_NEW_MESSAGE_NOTIFY, {
+                'sender': self.logged_in_user,
+                'message_id': result
+            })
+
+        self.send(RESP_SUCCESS, {'message_id': result}, True)
+
+    def handle_get_messages(self, data):
+        """Handle getting messages with a friend."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        friend = data.get('friend', '').strip()
+        since_id = data.get('since_id', 0)
+
+        if not friend:
+            self.send(RESP_ERROR, "Friend username required", False)
+            return
+
+        messages = self.db.get_messages(self.logged_in_user, friend, since_id)
+        self.send(RESP_SUCCESS, {'messages': messages}, True)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CHALLENGE SYSTEM HANDLERS
+    # ════════════════════════════════════════════════════════════════════
+    def handle_challenge_send(self, data):
+        """Handle sending a game challenge."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        challenged = data.get('challenged', '').strip()
+        color_choice = data.get('color_choice', 'random')
+        rated = data.get('rated', True)
+
+        if not challenged:
+            self.send(RESP_ERROR, "Challenged user required", False)
+            return
+
+        success, result = self.db.send_challenge(
+            self.logged_in_user, challenged, color_choice, rated
+        )
+        
+        if not success:
+            self.send(RESP_ERROR, result, False)
+            return
+
+        # Notify the challenged user
+        server = getattr(self, 'server', None)
+        if server and challenged in server.connected_clients:
+            server.connected_clients[challenged].send(MSG_CHALLENGE_SEND, {
+                'challenger': self.logged_in_user,
+                'challenge_id': result,
+                'color_choice': color_choice,
+                'rated': rated
+            })
+
+        self.send(RESP_SUCCESS, {'challenge_id': result}, True)
+
+    def handle_challenge_response(self, data):
+        """Handle responding to a challenge."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        challenger = data.get('challenger', '').strip()
+        accept = data.get('accept', False)
+
+        if not challenger:
+            self.send(RESP_ERROR, "Challenger required", False)
+            return
+
+        success, result = self.db.respond_to_challenge(challenger, self.logged_in_user, accept)
+        
+        if not success:
+            self.send(RESP_ERROR, result, False)
+            return
+
+        # Notify the challenger
+        server = getattr(self, 'server', None)
+        if server and challenger in server.connected_clients:
+            server.connected_clients[challenger].send(MSG_CHALLENGE_RESPONSE, {
+                'responder': self.logged_in_user,
+                'accepted': accept,
+                'details': result if accept else None
+            })
+
+        if accept:
+            # Also send game start info to both players
+            if server and challenger in server.connected_clients:
+                server.connected_clients[challenger].send(MSG_GAME_START, {
+                    'opponent': self.logged_in_user,
+                    'color': result['challenger_color'],
+                    'rated': result['rated'],
+                    'challenge_id': result['challenge_id']
+                })
+            self.send(MSG_GAME_START, {
+                'opponent': challenger,
+                'color': result['challenged_color'],
+                'rated': result['rated'],
+                'challenge_id': result['challenge_id']
+            })
+
+        self.send(RESP_SUCCESS, result if accept else {'message': result}, True)
+
+    def handle_challenge_list(self, data):
+        """Handle getting pending challenges."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        challenges = self.db.get_challenges(self.logged_in_user)
+        self.send(RESP_SUCCESS, {'challenges': challenges}, True)
+
+    def handle_challenge_cancel(self, data):
+        """Handle cancelling a challenge."""
+        if not self.logged_in_user:
+            self.send(RESP_ERROR, "Not logged in", False)
+            return
+
+        challenged = data.get('challenged', '').strip()
+        if not challenged:
+            self.send(RESP_ERROR, "Challenged user required", False)
+            return
+
+        success, message = self.db.cancel_challenge(self.logged_in_user, challenged)
+        self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
 
     def handle_request(self):
         """Main request handling loop."""
@@ -982,6 +1599,10 @@ class ClientHandler:
                 # Leave queue if in one
                 if self.matchmaking and self.logged_in_user:
                     self.matchmaking.leave_queue(self.logged_in_user)
+                # Remove from connected clients
+                server = getattr(self, 'server', None)
+                if server and self.logged_in_user in server.connected_clients:
+                    del server.connected_clients[self.logged_in_user]
                 self.logged_in_user = None
                 self.send(RESP_SUCCESS, "Logged out", True)
             elif msg_type == MSG_GET_PROFILE:
@@ -1011,6 +1632,33 @@ class ClientHandler:
                 self.handle_game_draw_accept(data)
             elif msg_type == MSG_GAME_CHAT:
                 self.handle_game_chat(data)
+            # Friend system messages
+            elif msg_type == MSG_FRIEND_REQUEST:
+                self.handle_friend_request(data)
+            elif msg_type == MSG_FRIEND_RESPONSE:
+                self.handle_friend_response(data)
+            elif msg_type == MSG_FRIEND_LIST:
+                self.handle_friend_list(data)
+            elif msg_type == MSG_FRIEND_REMOVE:
+                self.handle_friend_remove(data)
+            elif msg_type == MSG_FRIEND_STATUS:
+                self.handle_friend_requests_list(data)
+            # Messaging system messages
+            elif msg_type == MSG_KEY_EXCHANGE:
+                self.handle_key_exchange(data)
+            elif msg_type == MSG_SEND_MESSAGE:
+                self.handle_send_message(data)
+            elif msg_type == MSG_GET_MESSAGES:
+                self.handle_get_messages(data)
+            # Challenge system messages
+            elif msg_type == MSG_CHALLENGE_SEND:
+                self.handle_challenge_send(data)
+            elif msg_type == MSG_CHALLENGE_RESPONSE:
+                self.handle_challenge_response(data)
+            elif msg_type == MSG_CHALLENGE_LIST:
+                self.handle_challenge_list(data)
+            elif msg_type == MSG_CHALLENGE_CANCEL:
+                self.handle_challenge_cancel(data)
             else:
                 self.send(RESP_ERROR, f"Unknown message type: {msg_type}", False)
 
@@ -1039,6 +1687,8 @@ class ChessServer:
         self.server_socket = None
         self.running = False
         self.clients = []
+        self.connected_clients = {}  # username -> handler mapping for messaging
+        self.cleanup_running = True
 
     def start(self):
         """Start the server."""
@@ -1052,6 +1702,10 @@ class ChessServer:
 
             # Start matchmaking system
             self.matchmaking.start()
+
+            # Start message cleanup thread
+            cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
+            cleanup_thread.start()
 
             print("")
             print("╔══════════════════════════════════════════════════════════════╗")
@@ -1102,10 +1756,15 @@ class ChessServer:
     def _handle_client(self, handler):
         """Handle a client connection."""
         try:
+            # Set server reference for notifications
+            handler.server = self
             handler.handle_request()
         except Exception as e:
             print(f"  [ERROR] Client handler error: {e}", flush=True)
         finally:
+            # Remove from connected clients
+            if handler.logged_in_user and handler.logged_in_user in self.connected_clients:
+                del self.connected_clients[handler.logged_in_user]
             handler.close()
             if handler in self.clients:
                 self.clients.remove(handler)
@@ -1128,9 +1787,21 @@ class ChessServer:
             except:
                 pass
 
+    def _cleanup_loop(self):
+        """Background loop to cleanup expired messages."""
+        while self.cleanup_running:
+            time.sleep(3600)  # Check every hour
+            try:
+                deleted = self.db_manager.cleanup_expired_messages()
+                if deleted > 0:
+                    print(f"  [INFO] Cleaned up {deleted} expired messages", flush=True)
+            except Exception as e:
+                print(f"  [ERROR] Message cleanup failed: {e}", flush=True)
+
     def stop(self):
         """Stop the server."""
         self.running = False
+        self.cleanup_running = False
         self.matchmaking.stop()
         for client in self.clients:
             client.close()
@@ -1313,6 +1984,84 @@ class ChessClient:
             'game_id': game_id,
             'message': message
         })
+
+    # ════════════════════════════════════════════════════════════════════
+    #  FRIEND SYSTEM CLIENT METHODS
+    # ════════════════════════════════════════════════════════════════════
+    def send_friend_request(self, recipient):
+        """Send a friend request."""
+        self.send(MSG_FRIEND_REQUEST, {'recipient': recipient})
+        return self.recv()
+
+    def respond_to_friend_request(self, sender, accept):
+        """Respond to a friend request."""
+        self.send(MSG_FRIEND_RESPONSE, {'sender': sender, 'accept': accept})
+        return self.recv()
+
+    def get_friend_list(self):
+        """Get list of friends."""
+        self.send(MSG_FRIEND_LIST)
+        return self.recv()
+
+    def remove_friend(self, friend):
+        """Remove a friend."""
+        self.send(MSG_FRIEND_REMOVE, {'friend': friend})
+        return self.recv()
+
+    def get_friend_requests(self):
+        """Get pending friend requests."""
+        self.send(MSG_FRIEND_STATUS)
+        return self.recv()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  MESSAGING SYSTEM CLIENT METHODS
+    # ════════════════════════════════════════════════════════════════════
+    def key_exchange(self, public_key, key_type='dh'):
+        """Perform key exchange for E2E encryption."""
+        self.send(MSG_KEY_EXCHANGE, {'public_key': public_key, 'key_type': key_type})
+        return self.recv()
+
+    def send_message(self, recipient, encrypted_content, iv, tag):
+        """Send an encrypted message."""
+        self.send(MSG_SEND_MESSAGE, {
+            'recipient': recipient,
+            'encrypted_content': encrypted_content,
+            'iv': iv,
+            'tag': tag
+        })
+        return self.recv()
+
+    def get_messages(self, friend, since_id=0):
+        """Get messages with a friend."""
+        self.send(MSG_GET_MESSAGES, {'friend': friend, 'since_id': since_id})
+        return self.recv()
+
+    # ════════════════════════════════════════════════════════════════════
+    #  CHALLENGE SYSTEM CLIENT METHODS
+    # ════════════════════════════════════════════════════════════════════
+    def send_challenge(self, challenged, color_choice='random', rated=True):
+        """Send a game challenge."""
+        self.send(MSG_CHALLENGE_SEND, {
+            'challenged': challenged,
+            'color_choice': color_choice,
+            'rated': rated
+        })
+        return self.recv()
+
+    def respond_to_challenge(self, challenger, accept):
+        """Respond to a challenge."""
+        self.send(MSG_CHALLENGE_RESPONSE, {'challenger': challenger, 'accept': accept})
+        return self.recv()
+
+    def get_challenges(self):
+        """Get pending challenges."""
+        self.send(MSG_CHALLENGE_LIST)
+        return self.recv()
+
+    def cancel_challenge(self, challenged):
+        """Cancel a pending challenge."""
+        self.send(MSG_CHALLENGE_CANCEL, {'challenged': challenged})
+        return self.recv()
 
 
 # ════════════════════════════════════════════════════════════════════════
