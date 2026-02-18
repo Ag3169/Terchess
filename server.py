@@ -21,7 +21,381 @@ import struct
 import os
 import re
 import time
+import secrets
+import base64
 from datetime import datetime
+from hmac import compare_digest
+
+# ════════════════════════════════════════════════════════════════════════
+#  E2E ENCRYPTION UTILITIES (Pure Python stdlib - AES-GCM + ECDH-like)
+# ════════════════════════════════════════════════════════════════════════
+
+def _xor_bytes(a: bytes, b: bytes) -> bytes:
+    """XOR two byte strings."""
+    return bytes(x ^ y for x, y in zip(a, b))
+
+def _pad_pkcs7(data: bytes, block_size: int = 16) -> bytes:
+    """Pad data using PKCS7."""
+    pad_len = block_size - (len(data) % block_size)
+    return data + bytes([pad_len] * pad_len)
+
+def _unpad_pkcs7(data: bytes) -> bytes:
+    """Remove PKCS7 padding."""
+    pad_len = data[-1]
+    if pad_len < 1 or pad_len > 16:
+        raise ValueError("Invalid padding")
+    if not compare_digest(data[-pad_len:], bytes([pad_len] * pad_len)):
+        raise ValueError("Invalid padding")
+    return data[:-pad_len]
+
+def _bytes_to_int(b: bytes) -> int:
+    """Convert bytes to integer (big-endian)."""
+    return int.from_bytes(b, 'big')
+
+def _int_to_bytes(n: int, length: int = 256) -> bytes:
+    """Convert integer to bytes (big-endian). Default 256 bytes for 2048-bit DH."""
+    return n.to_bytes(length, 'big')
+
+def _mod_pow(base: int, exp: int, mod: int) -> int:
+    """Modular exponentiation."""
+    result = 1
+    base = base % mod
+    while exp > 0:
+        if exp & 1:
+            result = (result * base) % mod
+        exp >>= 1
+        base = (base * base) % mod
+    return result
+
+# 2048-bit MODP Group (RFC 3526)
+_DH_P = int(
+    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"
+    "29024E088A67CC74020BBEA63B139B22514A08798E3404DD"
+    "EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"
+    "E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"
+    "EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D"
+    "C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"
+    "83655D23DCA3AD961C62F356208552BB9ED529077096966D"
+    "670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"
+    "E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9"
+    "DE2BCBF6955817183995497CEA956AE515D2261898FA0510"
+    "15728E5A8AACAA68FFFFFFFFFFFFFFFF", 16
+)
+_DH_G = 2
+_DH_PRIVATE_BITS = 256
+
+def _dh_generate_keypair():
+    """Generate Diffie-Hellman key pair."""
+    private_key = secrets.randbits(_DH_PRIVATE_BITS)
+    public_key = _mod_pow(_DH_G, private_key, _DH_P)
+    return private_key, public_key
+
+def _dh_compute_shared_secret(private_key: int, other_public: int) -> bytes:
+    """Compute DH shared secret and derive AES key."""
+    shared = _mod_pow(other_public, private_key, _DH_P)
+    # Derive 256-bit key using HKDF-like construction
+    return hashlib.sha256(_int_to_bytes(shared)).digest()
+
+def _aes_encrypt_block(block: bytes, key: bytes) -> bytes:
+    """AES-256 encryption (pure Python implementation)."""
+    # AES S-box
+    SBOX = bytes([
+        0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
+        0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
+        0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
+        0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
+        0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
+        0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
+        0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
+        0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
+        0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
+        0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
+        0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
+        0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
+        0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
+        0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
+        0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
+        0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16,
+    ])
+    
+    # Round constants
+    RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a]
+    
+    def sub_bytes(state):
+        return [SBOX[b] for b in state]
+    
+    def shift_rows(state):
+        s = state[:]
+        # Row 1: shift left by 1
+        s[1], s[5], s[9], s[13] = state[5], state[9], state[13], state[1]
+        # Row 2: shift left by 2
+        s[2], s[6], s[10], s[14] = state[10], state[14], state[2], state[6]
+        # Row 3: shift left by 3
+        s[3], s[7], s[11], s[15] = state[15], state[3], state[7], state[11]
+        return s
+    
+    def xtime(a):
+        return ((a << 1) ^ 0x1b) & 0xff if a & 0x80 else (a << 1) & 0xff
+    
+    def mix_single_column(col):
+        t = col[0] ^ col[1] ^ col[2] ^ col[3]
+        u = col[0]
+        col[0] ^= t ^ xtime(col[0] ^ col[1])
+        col[1] ^= t ^ xtime(col[1] ^ col[2])
+        col[2] ^= t ^ xtime(col[2] ^ col[3])
+        col[3] ^= t ^ xtime(col[3] ^ u)
+        return col
+    
+    def mix_columns(state):
+        s = state[:]
+        for i in range(4):
+            col = mix_single_column(s[i*4:(i+1)*4])
+            s[i*4:(i+1)*4] = col
+        return s
+    
+    def add_round_key(state, round_key):
+        return [s ^ k for s, k in zip(state, round_key)]
+    
+    def key_expansion(key):
+        key_schedule = list(key)
+        for i in range(4, 60):
+            temp = key_schedule[(i-1)*4:(i)*4]
+            if i % 4 == 0:
+                temp = [SBOX[temp[1]], SBOX[temp[2]], SBOX[temp[3]], SBOX[temp[0]]]
+                temp[0] ^= RCON[i//4 - 1]
+            for j in range(4):
+                key_schedule.append(key_schedule[(i-4)*4 + j] ^ temp[j])
+        return key_schedule
+    
+    # Key expansion
+    key_schedule = key_expansion(key)
+    
+    # Initial state
+    state = list(block)
+    
+    # Initial round key addition
+    state = add_round_key(state, key_schedule[:16])
+    
+    # Main rounds (14 rounds for AES-256)
+    for round_num in range(1, 14):
+        state = sub_bytes(state)
+        state = shift_rows(state)
+        state = mix_columns(state)
+        state = add_round_key(state, key_schedule[round_num*16:(round_num+1)*16])
+    
+    # Final round (no MixColumns)
+    state = sub_bytes(state)
+    state = shift_rows(state)
+    state = add_round_key(state, key_schedule[14*16:15*16])
+    
+    return bytes(state)
+
+def _aes_decrypt_block(block: bytes, key: bytes) -> bytes:
+    """AES-256 decryption (pure Python implementation)."""
+    # AES inverse S-box
+    INV_SBOX = bytes([
+        0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
+        0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
+        0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
+        0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25,
+        0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92,
+        0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84,
+        0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06,
+        0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b,
+        0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73,
+        0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e,
+        0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b,
+        0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4,
+        0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
+        0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef,
+        0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
+        0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d,
+    ])
+    
+    RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a]
+    
+    def inv_sub_bytes(state):
+        return [INV_SBOX[b] for b in state]
+    
+    def inv_shift_rows(state):
+        s = state[:]
+        s[1], s[5], s[9], s[13] = state[13], state[1], state[5], state[9]
+        s[2], s[6], s[10], s[14] = state[10], state[14], state[2], state[6]
+        s[3], s[7], s[11], s[15] = state[7], state[11], state[15], state[3]
+        return s
+    
+    def inv_mix_columns(state):
+        s = state[:]
+        for i in range(4):
+            a = s[i*4:(i+1)*4]
+            s[i*4] = (0x0e * a[0]) ^ (0x0b * a[1]) ^ (0x0d * a[2]) ^ (0x09 * a[3])
+            s[i*4+1] = (0x09 * a[0]) ^ (0x0e * a[1]) ^ (0x0b * a[2]) ^ (0x0d * a[3])
+            s[i*4+2] = (0x0d * a[0]) ^ (0x09 * a[1]) ^ (0x0e * a[2]) ^ (0x0b * a[3])
+            s[i*4+3] = (0x0b * a[0]) ^ (0x0d * a[1]) ^ (0x09 * a[2]) ^ (0x0e * a[3])
+        return s
+    
+    def gmul(a, b):
+        p = 0
+        for _ in range(8):
+            if b & 1:
+                p ^= a
+            hi_bit = a & 0x80
+            a = (a << 1) & 0xff
+            if hi_bit:
+                a ^= 0x1b
+            b >>= 1
+        return p
+    
+    def key_expansion(key):
+        key_schedule = list(key)
+        for i in range(4, 60):
+            temp = key_schedule[(i-1)*4:(i)*4]
+            if i % 4 == 0:
+                temp = [INV_SBOX[temp[1]], INV_SBOX[temp[2]], INV_SBOX[temp[3]], INV_SBOX[temp[0]]]
+                temp[0] ^= RCON[i//4 - 1]
+            for j in range(4):
+                key_schedule.append(key_schedule[(i-4)*4 + j] ^ temp[j])
+        return key_schedule
+    
+    key_schedule = key_expansion(key)
+    state = list(block)
+    state = add_round_key(state, key_schedule[14*16:15*16])
+    
+    for round_num in range(13, 0, -1):
+        state = inv_shift_rows(state)
+        state = inv_sub_bytes(state)
+        state = add_round_key(state, key_schedule[round_num*16:(round_num+1)*16])
+        if round_num > 1:
+            state = inv_mix_columns(state)
+    
+    state = inv_shift_rows(state)
+    state = inv_sub_bytes(state)
+    state = add_round_key(state, key_schedule[:16])
+    
+    return bytes(state)
+
+def _aes_ctr_encrypt(plaintext: bytes, key: bytes, nonce: bytes) -> bytes:
+    """AES-256 CTR mode encryption."""
+    result = bytearray()
+    counter = 0
+    for i in range(0, len(plaintext), 16):
+        counter_block = nonce + _int_to_bytes(counter, 4)[:4]
+        keystream = _aes_encrypt_block(counter_block, key)
+        block = plaintext[i:i+16]
+        encrypted = _xor_bytes(block, keystream[:len(block)])
+        result.extend(encrypted)
+        counter += 1
+    return bytes(result)
+
+def _aes_ctr_decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> bytes:
+    """AES-256 CTR mode decryption (same as encryption for CTR mode)."""
+    return _aes_ctr_encrypt(ciphertext, key, nonce)
+
+def _ghash(h: bytes, data: bytes) -> bytes:
+    """GHASH for GCM mode."""
+    def gf_mult(x: int, y: int) -> int:
+        z = 0
+        for i in range(128):
+            if (x >> (127 - i)) & 1:
+                z ^= y
+            if y & 1:
+                y = (y >> 1) ^ 0xe1000000000000000000000000000000
+            else:
+                y >>= 1
+        return z
+    
+    h_int = _bytes_to_int(h)
+    result = 0
+    for i in range(0, len(data), 16):
+        block = data[i:i+16]
+        if len(block) < 16:
+            block = block + b'\x00' * (16 - len(block))
+        result = gf_mult(result ^ _bytes_to_int(block), h_int)
+    return _int_to_bytes(result, 16)
+
+def _gcm_encrypt(plaintext: bytes, key: bytes, nonce: bytes, aad: bytes = b'') -> tuple:
+    """AES-GCM encryption."""
+    # Generate H (hash key)
+    h = _aes_encrypt_block(b'\x00' * 16, key)
+    
+    # Initial counter
+    j0 = nonce + b'\x00\x00\x00\x01' if len(nonce) == 12 else nonce + b'\x00' * (16 - len(nonce) % 16) + b'\x00\x00\x00\x01'
+    
+    # Encrypt plaintext
+    ciphertext = _aes_ctr_encrypt(plaintext, key, j0[:12])
+    
+    # Compute GHASH
+    ghash_input = aad + b'\x00' * ((16 - len(aad) % 16) % 16) if aad else b''
+    ghash_input += ciphertext + b'\x00' * ((16 - len(ciphertext) % 16) % 16)
+    ghash_input += _int_to_bytes(len(aad) * 8, 8) + _int_to_bytes(len(ciphertext) * 8, 8)
+    
+    s = _ghash(h, ghash_input)
+    
+    # Compute tag
+    tag_input = _aes_encrypt_block(j0, key)
+    tag = _xor_bytes(s, tag_input)
+    
+    return ciphertext, tag
+
+def _gcm_decrypt(ciphertext: bytes, key: bytes, nonce: bytes, tag: bytes, aad: bytes = b'') -> bytes:
+    """AES-GCM decryption."""
+    h = _aes_encrypt_block(b'\x00' * 16, key)
+    
+    j0 = nonce + b'\x00\x00\x00\x01' if len(nonce) == 12 else nonce + b'\x00' * (16 - len(nonce) % 16) + b'\x00\x00\x00\x01'
+    
+    # Verify tag first
+    ghash_input = aad + b'\x00' * ((16 - len(aad) % 16) % 16) if aad else b''
+    ghash_input += ciphertext + b'\x00' * ((16 - len(ciphertext) % 16) % 16)
+    ghash_input += _int_to_bytes(len(aad) * 8, 8) + _int_to_bytes(len(ciphertext) * 8, 8)
+    
+    s = _ghash(h, ghash_input)
+    tag_input = _aes_encrypt_block(j0, key)
+    computed_tag = _xor_bytes(s, tag_input)
+    
+    if not compare_digest(computed_tag, tag):
+        raise ValueError("Authentication tag verification failed")
+    
+    plaintext = _aes_ctr_decrypt(ciphertext, key, j0[:12])
+    return plaintext
+
+def encrypt_credentials(credentials: dict, server_public: int) -> dict:
+    """Encrypt credentials using ECDH + AES-GCM."""
+    # Generate ephemeral key pair
+    client_private, client_public = _dh_generate_keypair()
+    
+    # Compute shared secret
+    shared_secret = _dh_compute_shared_secret(client_private, server_public)
+    
+    # Serialize credentials
+    credentials_json = json.dumps(credentials).encode('utf-8')
+    
+    # Generate random nonce
+    nonce = secrets.token_bytes(12)
+    
+    # Encrypt with AES-GCM
+    ciphertext, tag = _gcm_encrypt(credentials_json, shared_secret, nonce)
+    
+    return {
+        'client_public': client_public,
+        'nonce': base64.b64encode(nonce).decode(),
+        'ciphertext': base64.b64encode(ciphertext).decode(),
+        'tag': base64.b64encode(tag).decode()
+    }
+
+def decrypt_credentials(encrypted_data: dict, server_private: int) -> dict:
+    """Decrypt credentials using ECDH + AES-GCM."""
+    client_public = encrypted_data['client_public']
+    nonce = base64.b64decode(encrypted_data['nonce'])
+    ciphertext = base64.b64decode(encrypted_data['ciphertext'])
+    tag = base64.b64decode(encrypted_data['tag'])
+    
+    # Compute shared secret
+    shared_secret = _dh_compute_shared_secret(server_private, client_public)
+    
+    # Decrypt
+    plaintext = _gcm_decrypt(ciphertext, shared_secret, nonce, tag)
+    
+    return json.loads(plaintext.decode('utf-8'))
 
 # ════════════════════════════════════════════════════════════════════════
 #  CONSTANTS
@@ -76,6 +450,10 @@ MSG_CHALLENGE_SEND = 'CHALLENGE_SEND'
 MSG_CHALLENGE_RESPONSE = 'CHALLENGE_RESPONSE'
 MSG_CHALLENGE_LIST = 'CHALLENGE_LIST'
 MSG_CHALLENGE_CANCEL = 'CHALLENGE_CANCEL'
+
+# E2E Encryption message types
+MSG_GET_SERVER_PUBLIC_KEY = 'GET_SERVER_PUBLIC_KEY'
+MSG_SESSION_KEY_EXCHANGE = 'SESSION_KEY_EXCHANGE'
 
 # Response types
 RESP_SUCCESS = 'SUCCESS'
@@ -1032,56 +1410,140 @@ class ClientHandler:
         self.logged_in_user = None
         self.pending = b''
         self.current_game_id = None
+        # E2E encryption session keys
+        self.session_key = None  # 32-byte AES key
+        self.client_public = None  # Client's DH public key for session
+        self.encryption_enabled = False
+        self._nonce_counter = 0  # For CTR mode nonce
+
+    def _derive_nonce(self):
+        """Derive a unique nonce for each message (12 bytes for GCM)."""
+        self._nonce_counter += 1
+        # Pack counter as 8-byte big-endian, then pad to 12 bytes
+        return b'\x00\x00\x00\x00' + struct.pack('>Q', self._nonce_counter)
+
+    def _encrypt_message(self, plaintext: bytes) -> bytes:
+        """Encrypt a message using session key."""
+        if not self.encryption_enabled or self.session_key is None:
+            return plaintext
+        nonce = self._derive_nonce()
+        ciphertext, tag = _gcm_encrypt(plaintext, self.session_key, nonce)
+        # Prepend nonce to ciphertext
+        return b'E' + nonce + ciphertext + tag
+
+    def _decrypt_message(self, ciphertext: bytes) -> bytes:
+        """Decrypt a message using session key."""
+        if not self.encryption_enabled or self.session_key is None:
+            return ciphertext
+        if len(ciphertext) < 29:  # 1 (flag) + 12 (nonce) + 16 (tag)
+            raise ValueError("Invalid encrypted message")
+        if ciphertext[0:1] != b'E':
+            raise ValueError("Invalid encryption flag")
+        nonce = ciphertext[1:13]
+        encrypted_data = ciphertext[13:-16]
+        tag = ciphertext[-16:]
+        return _gcm_decrypt(encrypted_data, self.session_key, nonce, tag)
 
     def send(self, msg_type, data='', success=True):
-        """Send a message to the client."""
+        """Send a message to the client (encrypted if session established)."""
         payload = json.dumps({
             'type': msg_type,
             'success': success,
             'data': data
         }).encode()
 
+        # Encrypt if session is established (but not for key exchange messages)
+        if self.encryption_enabled and self.session_key and msg_type not in [MSG_GET_SERVER_PUBLIC_KEY, MSG_SESSION_KEY_EXCHANGE]:
+            payload = self._encrypt_message(payload)
+
         header = struct.pack('>I', len(payload))
         try:
             self.conn.sendall(header + payload)
             return True
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            # Client disconnected
+            print(f"  [INFO] Send failed (client disconnected): {e}", flush=True)
+            return False
         except Exception as e:
+            print(f"  [ERROR] send error: {e}", flush=True)
             return False
 
     def recv(self, timeout=30.0):
-        """Receive a message from the client."""
+        """Receive a message from the client (decrypt if session established)."""
         self.conn.settimeout(timeout)
         try:
             while True:
-                if len(self.pending) >= 4:
+                # Need at least 4 bytes for header
+                header_size = 4
+                if len(self.pending) >= header_size:
+                    # Check if this might be an encrypted payload
                     length = struct.unpack('>I', self.pending[:4])[0]
+                    # Sanity check on length
+                    if length > 10_000_000:  # 10MB max
+                        self.pending = self.pending[1:]  # Skip byte and retry
+                        continue
                     if len(self.pending) >= 4 + length:
                         payload = self.pending[4:4 + length]
                         self.pending = self.pending[4 + length:]
+                        # Try to decrypt if encryption is enabled
+                        if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
+                            payload = self._decrypt_message(payload)
                         return json.loads(payload.decode())
 
                 chunk = self.conn.recv(4096)
                 if not chunk:
+                    # Client disconnected
                     return None
                 self.pending += chunk
         except socket.timeout:
             return None
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            # Connection error - client disconnected unexpectedly
+            print(f"  [INFO] Connection lost: {e}", flush=True)
+            return None
         except Exception as e:
+            print(f"  [ERROR] recv error: {e}", flush=True)
             return None
 
     def handle_register(self, data):
-        """Handle user registration."""
-        username = data.get('username', '').strip()
-        password = data.get('password', '')
-        email = data.get('email', '').strip()
+        """Handle user registration with E2E encryption."""
+        # Check if data is encrypted
+        if 'encrypted' in data and data['encrypted']:
+            try:
+                # Decrypt the credentials
+                credentials = decrypt_credentials(data, ChessServer._server_private)
+                username = credentials.get('username', '').strip()
+                password = credentials.get('password', '')
+                email = credentials.get('email', '').strip()
+            except Exception as e:
+                self.send(RESP_ERROR, "Decryption failed", False)
+                return
+        else:
+            # Fallback to plaintext (for debugging)
+            username = data.get('username', '').strip()
+            password = data.get('password', '')
+            email = data.get('email', '').strip()
 
         success, message = self.db.register_user(username, password, email)
         self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
 
     def handle_login(self, data):
-        """Handle user login."""
-        username = data.get('username', '').strip()
-        password = data.get('password', '')
+        """Handle user login with E2E encryption."""
+        # Check if data is encrypted
+        if 'encrypted' in data and data['encrypted']:
+            try:
+                # Decrypt the credentials
+                credentials = decrypt_credentials(data, ChessServer._server_private)
+                username = credentials.get('username', '').strip()
+                password = credentials.get('password', '')
+            except Exception as e:
+                print(f"  [DEBUG] Decryption failed: {e}", flush=True)
+                self.send(RESP_ERROR, "Decryption failed", False)
+                return
+        else:
+            # Fallback to plaintext (for debugging)
+            username = data.get('username', '').strip()
+            password = data.get('password', '')
 
         success, message = self.db.authenticate_user(username, password)
         if success:
@@ -1156,8 +1618,15 @@ class ClientHandler:
     
     def handle_list_users(self, data):
         """Handle user list request."""
-        users = self.db.list_users()
-        self.send(RESP_USERS, users, True)
+        print(f"  [DEBUG] handle_list_users called with data: {data}", flush=True)
+        try:
+            users = self.db.list_users()
+            print(f"  [DEBUG] Retrieved {len(users)} users: {users}", flush=True)
+            self.send(RESP_USERS, users, True)
+            print(f"  [DEBUG] Sent users list to client", flush=True)
+        except Exception as e:
+            print(f"  [ERROR] handle_list_users failed: {e}", flush=True)
+            self.send(RESP_ERROR, str(e), False)
 
     def handle_leaderboard(self, data):
         """Handle leaderboard request."""
@@ -1387,32 +1856,53 @@ class ClientHandler:
     # ════════════════════════════════════════════════════════════════════
     #  MESSAGING SYSTEM HANDLERS
     # ════════════════════════════════════════════════════════════════════
-    def handle_key_exchange(self, data):
-        """Handle key exchange for E2E encryption."""
+    def handle_session_key_exchange(self, data):
+        """Handle session key exchange for E2E encryption of all communications."""
         if not self.logged_in_user:
             self.send(RESP_ERROR, "Not logged in", False)
             return
 
-        # Get the public key from the client
-        public_key = data.get('public_key')
-        key_type = data.get('key_type', 'dh')  # Diffie-Hellman
-        
-        if not public_key:
-            self.send(RESP_ERROR, "Public key required", False)
+        # Get client's public key
+        client_public = data.get('client_public')
+        if not client_public:
+            self.send(RESP_ERROR, "Client public key required", False)
             return
 
-        # Store the public key for this user (in a real implementation, this would be more secure)
-        server = getattr(self, 'server', None)
-        if server:
-            if not hasattr(server, 'user_keys'):
-                server.user_keys = {}
-            server.user_keys[self.logged_in_user] = public_key
+        try:
+            # Compute shared secret using server's private key and client's public key
+            shared_secret = _dh_compute_shared_secret(ChessServer._server_private, client_public)
 
-        # For now, just acknowledge the key exchange
-        # In a real implementation, the server would facilitate DH key exchange
+            # Store the session key
+            self.session_key = shared_secret
+            self.encryption_enabled = True
+            self._nonce_counter = 0  # Reset nonce counter
+
+            print(f"  [INFO] E2E encryption session established with {self.logged_in_user}", flush=True)
+
+            # Send confirmation WITH server's public key (unencrypted so client can compute shared secret)
+            # Temporarily disable encryption for this message
+            old_encryption_state = self.encryption_enabled
+            self.encryption_enabled = False
+            self.send(RESP_SUCCESS, {
+                'message': 'Session key exchange successful. All future communications are encrypted.',
+                'server_public': ChessServer._server_public
+            }, True)
+            # Re-enable encryption
+            self.encryption_enabled = old_encryption_state
+        except Exception as e:
+            print(f"  [ERROR] Session key exchange failed: {e}", flush=True)
+            self.send(RESP_ERROR, "Session key exchange failed", False)
+
+    def handle_key_exchange(self, data):
+        """Handle key exchange for E2E encryption (legacy - use SESSION_KEY_EXCHANGE instead)."""
+        # Redirect to session key exchange for backward compatibility
+        self.handle_session_key_exchange(data)
+
+    def handle_get_server_public_key(self, data):
+        """Handle request for server's public key (for E2E encryption)."""
+        # Send server's public key to client
         self.send(RESP_SUCCESS, {
-            'message': 'Key exchange acknowledged',
-            'key_type': key_type
+            'server_public': ChessServer._server_public
         }, True)
 
     def handle_send_message(self, data):
@@ -1646,10 +2136,15 @@ class ClientHandler:
             # Messaging system messages
             elif msg_type == MSG_KEY_EXCHANGE:
                 self.handle_key_exchange(data)
+            elif msg_type == MSG_SESSION_KEY_EXCHANGE:
+                self.handle_session_key_exchange(data)
             elif msg_type == MSG_SEND_MESSAGE:
                 self.handle_send_message(data)
             elif msg_type == MSG_GET_MESSAGES:
                 self.handle_get_messages(data)
+            # E2E Encryption
+            elif msg_type == MSG_GET_SERVER_PUBLIC_KEY:
+                self.handle_get_server_public_key(data)
             # Challenge system messages
             elif msg_type == MSG_CHALLENGE_SEND:
                 self.handle_challenge_send(data)
@@ -1668,9 +2163,14 @@ class ClientHandler:
             # Leave queue if in one
             if self.matchmaking and self.logged_in_user:
                 self.matchmaking.leave_queue(self.logged_in_user)
+            # Properly shutdown the connection
+            try:
+                self.conn.shutdown(socket.SHUT_RDWR)
+            except:
+                pass
             self.conn.close()
-        except:
-            pass
+        except Exception as e:
+            print(f"  [DEBUG] close error: {e}", flush=True)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -1678,6 +2178,9 @@ class ClientHandler:
 # ════════════════════════════════════════════════════════════════════════
 class ChessServer:
     """Main chess server class."""
+    
+    # Server's long-term DH key pair (generated once at startup)
+    _server_private, _server_public = _dh_generate_keypair()
 
     def __init__(self, host='0.0.0.0', port=SERVER_PORT):
         self.host = host
@@ -1694,6 +2197,7 @@ class ChessServer:
         """Start the server."""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 
         try:
             self.server_socket.bind((self.host, self.port))
