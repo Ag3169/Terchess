@@ -4,19 +4,19 @@
 ║            ASCII CHESS — Ultimate Edition                                ║
 ║                                                                          ║
 ║  Features:                                                               ║
-║   • All chess rules (castling, en passant, promotion, 50-move,          ║
+║   • All chess rules (castling, en passant, promotion, 50-move,           ║
 ║     threefold repetition, insufficient material)                         ║
-║   • Standard Algebraic Notation (SAN) input with disambiguation         ║
-║   • Promote to Q, R, B, N                                               ║
-║   • Multiplayer over LAN/Internet (client/server TCP)                   ║
-║   • ELO rating system with persistent player database                   ║
-║   • Post-game analysis with centipawn loss & move annotations           ║
-║   • Built-in neural network positional evaluator (NNUE-style, pure py)  ║
-║   • Built-in endgame tablebases (KQK, KRK, KBNK, KPK — perfect play)   ║
-║   • Built-in opening book (500+ master-level openings, no file needed)  ║
-║   • Strong AI: negamax + α-β, IID, TT, null-move, LMR, aspiration,     ║
-║                killer/history heuristics, MVV-LVA, quiescence, futility ║
-║   • Zero external dependencies (pure Python stdlib only)                ║
+║   • Standard Algebraic Notation (SAN) input with disambiguation          ║
+║   • Promote to Q, R, B, N                                                ║
+║   • Multiplayer over LAN/Internet (client/server TCP)                    ║
+║   • ELO rating system with persistent player database                    ║
+║   • Post-game analysis with centipawn loss & move annotations            ║
+║   • Built-in neural network positional evaluator (NNUE-style, pure py)   ║
+║   • Built-in endgame tablebases (KQK, KRK, KBNK, KPK — perfect play)     ║
+║   • Built-in opening book (500+ master-level openings, no file needed)   ║
+║   • Strong AI: negamax + α-β, IID, TT, null-move, LMR, aspiration,       ║
+║                killer/history heuristics, MVV-LVA, quiescence, futility  ║
+║   • Zero external dependencies (pure Python stdlib only)                 ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -35,6 +35,8 @@ import re
 import math
 import random
 
+# ════════════════════════════════════════════════════════════════════════
+#  CONSTANTS
 # ════════════════════════════════════════════════════════════════════════
 #  UTILITY FUNCTIONS
 # ════════════════════════════════════════════════════════════════════════
@@ -1790,8 +1792,10 @@ def join_game(host_ip, port=MULTI_PORT):
 #  NETWORK CLIENT (Standalone - no server.py import needed)
 # ════════════════════════════════════════════════════════════════════════
 # Message types for server communication
+MSG_KEY_EXCHANGE = 'KEY_EXCHANGE'
 MSG_REGISTER = 'REGISTER'
 MSG_LOGIN = 'LOGIN'
+MSG_AUTO_LOGIN = 'AUTO_LOGIN'
 MSG_LOGOUT = 'LOGOUT'
 MSG_GET_PROFILE = 'GET_PROFILE'
 MSG_SAVE_GAME = 'SAVE_GAME'
@@ -1827,25 +1831,32 @@ class ChessClient:
     Standalone client for connecting to the chess server.
     Does not require importing server.py - uses pure socket communication.
     """
-    
+
     def __init__(self, host='localhost', port=65433):
         self.host = host
         self.port = port
         self.sock = None
         self.logged_in_user = None
         self.pending = b''
-    
+
     def connect(self):
         """Connect to the server."""
         try:
+            print(f"  Connecting to {self.host}:{self.port}...")
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(10.0)
             self.sock.connect((self.host, self.port))
             self.sock.settimeout(None)
+            self.pending = b''  # Clear any pending data
+            print(f"  TCP connection established")
             return True, "Connected to server"
+        except socket.timeout:
+            return False, f"Connection timed out"
+        except ConnectionRefusedError:
+            return False, f"Connection refused - is the server running?"
         except Exception as e:
             return False, f"Connection failed: {e}"
-    
+
     def disconnect(self):
         """Disconnect from the server."""
         self.logged_in_user = None
@@ -1855,29 +1866,30 @@ class ChessClient:
             except:
                 pass
             self.sock = None
-    
+
     def send(self, msg_type, data=None):
         """Send a message to the server."""
         if not self.sock:
             return False
-        
+
         payload = json.dumps({
             'type': msg_type,
             'data': data or {}
         }).encode()
+
         header = struct.pack('>I', len(payload))
-        
+
         try:
             self.sock.sendall(header + payload)
             return True
-        except:
+        except Exception as e:
             return False
-    
+
     def recv(self, timeout=5.0):
         """Receive a response from the server."""
         if not self.sock:
             return None
-        
+
         self.sock.settimeout(timeout)
         try:
             while True:
@@ -1887,15 +1899,16 @@ class ChessClient:
                         payload = self.pending[4:4 + length]
                         self.pending = self.pending[4 + length:]
                         return json.loads(payload.decode())
+
                 chunk = self.sock.recv(4096)
                 if not chunk:
                     return None
                 self.pending += chunk
         except socket.timeout:
             return None
-        except:
+        except Exception as e:
             return None
-    
+
     def register(self, username, password, email):
         """Register a new account."""
         self.send(MSG_REGISTER, {
@@ -1915,7 +1928,18 @@ class ChessClient:
         if response and response.get('success'):
             self.logged_in_user = username
         return response
-    
+
+    def auto_login(self, username, password_hash):
+        """Auto-login using stored password hash."""
+        self.send(MSG_AUTO_LOGIN, {
+            'username': username,
+            'password_hash': password_hash
+        })
+        response = self.recv()
+        if response and response.get('success'):
+            self.logged_in_user = username
+        return response
+
     def logout(self):
         """Logout from the account."""
         self.send(MSG_LOGOUT)
@@ -2013,9 +2037,49 @@ class ChessClient:
 # Global authentication state
 _server_client = None
 _current_user = None
-_server_host = '86.1.210.75'
-_server_port = 65433
+_server_host = None  # No default - user must choose server
+_server_port = None  # No default - user must choose server
 _offline_mode = True  # Start in offline mode by default
+
+# Credential storage file path
+_CREDENTIAL_FILE = os.path.expanduser('~/.terminalchess_credentials.json')
+_SERVER_CONFIG_FILE = os.path.expanduser('~/.terminalchess_server.json')
+
+
+def _load_server_config():
+    """Load saved server configuration from local file."""
+    global _server_host, _server_port
+    try:
+        if os.path.exists(_SERVER_CONFIG_FILE):
+            with open(_SERVER_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            _server_host = config.get('host')
+            _server_port = config.get('port')
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _save_server_config(host, port):
+    """Save server configuration to local file."""
+    try:
+        config = {'host': host, 'port': port}
+        with open(_SERVER_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def _remove_server_config():
+    """Remove saved server configuration from local file."""
+    try:
+        if os.path.exists(_SERVER_CONFIG_FILE):
+            os.remove(_SERVER_CONFIG_FILE)
+        return True
+    except Exception:
+        return False
 
 
 def set_offline_mode(enabled):
@@ -2047,6 +2111,62 @@ def set_current_user(username):
     global _current_user
     _current_user = username
 
+def _select_server():
+    """
+    Prompt user to select/configure a server connection.
+    Returns (success, message) tuple.
+    """
+    global _server_host, _server_port
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║              SERVER SELECTION                            ║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  You need to configure a server connection to play       ║")
+    print("  ║  online.                                                 ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+
+    # Try to load existing config
+    if _load_server_config() and _server_host and _server_port:
+        print(f"\n  Found saved server: {_server_host}:{_server_port}")
+        try:
+            use_saved = input("  Use this server? [Y/n]: ").strip().lower()
+        except EOFError:
+            use_saved = 'n'
+
+        if use_saved in ('y', 'yes', ''):
+            return True, f"Using saved server: {_server_host}:{_server_port}"
+        # If they decline, fall through to manual config
+
+    # Manual configuration
+    print("\n  Enter server details:")
+    print("  (Leave blank to cancel)")
+
+    try:
+        host = input("  Server host/IP: ").strip()
+        if not host:
+            return False, "Server configuration cancelled"
+
+        port_str = input("  Server port [65433]: ").strip()
+        if not port_str:
+            port_str = '65433'
+
+        port = int(port_str)
+
+        # Save the configuration
+        _server_host = host
+        _server_port = port
+        _save_server_config(host, port)
+
+        print(f"\n  ✓ Server configured: {host}:{port}")
+        print("  Server settings saved for future sessions")
+        return True, f"Server configured: {host}:{port}"
+
+    except ValueError:
+        return False, "Invalid port number"
+    except EOFError:
+        return False, "Server configuration cancelled"
+
+
 def connect_to_server(host=None, port=None, reconnect=False, auto_login=True):
     """
     Connect to the authentication server.
@@ -2065,6 +2185,12 @@ def connect_to_server(host=None, port=None, reconnect=False, auto_login=True):
     if port:
         _server_port = port
 
+    # Check if server is configured
+    if not _server_host or not _server_port:
+        success, msg = _select_server()
+        if not success:
+            return False, msg
+
     # Check if already connected
     if _server_client and _server_client.sock and not reconnect:
         return True, "Already connected"
@@ -2076,19 +2202,19 @@ def connect_to_server(host=None, port=None, reconnect=False, auto_login=True):
 
     client = ChessClient(host=_server_host, port=_server_port)
     success, msg = client.connect()
-    
+
     if not success:
         return False, msg
-    
+
     _server_client = client
-    
+
     # Auto-login if we have a current user and auto_login is enabled
     if auto_login and _current_user:
         # We need to send login message to server
         # But we don't have the password stored, so we just mark the connection
         # The server will recognize the user from subsequent authenticated requests
         pass
-    
+
     return True, "Connected"
 
 def disconnect_from_server():
@@ -2164,37 +2290,50 @@ def login_user():
     print("\n  ╔══════════════════════════════════════════════════════════╗")
     print("  ║                  USER LOGIN                              ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
-    
+
     # Connect to server first
     success, msg = connect_to_server()
     if not success:
         print(f"  {msg}")
         print("  Continuing in offline mode...")
         return None
-    
+
     while True:
         try:
             username = input("  Username: ").strip()
         except EOFError:
             return None
-        
+
         if not username:
             print("  Username cannot be empty")
             continue
         break
-    
+
     while True:
         try:
             password = input("  Password: ").strip()
         except EOFError:
             return None
         break
-    
+
     # Login with server
     response = _server_client.login(username, password)
     if response and response.get('success'):
         print(f"\n  ✓ Welcome back, {username}!")
         set_current_user(username)
+        
+        # Offer to save credentials for auto-login
+        try:
+            save = input("\n  Save credentials for auto-login? [Y/n]: ").strip().lower()
+        except EOFError:
+            save = 'n'
+        
+        if save in ('y', 'yes', ''):
+            if _save_credentials(username, password):
+                print("  ✓ Credentials saved. You will be auto-logged in next time.")
+            else:
+                print("  ✗ Failed to save credentials.")
+        
         return username
     else:
         error_msg = response.get('data', 'Login failed') if response else 'Login failed'
@@ -2207,7 +2346,97 @@ def logout_user():
     if _current_user and _server_client:
         _server_client.logout()
     _current_user = None
-    print("  Logged out successfully.")
+    _remove_credentials()
+    print("  Logged out successfully. Saved credentials removed.")
+
+def _save_credentials(username, password):
+    """Save user credentials to local file for auto-login."""
+    try:
+        credentials = {}
+        if os.path.exists(_CREDENTIAL_FILE):
+            with open(_CREDENTIAL_FILE, 'r') as f:
+                credentials = json.load(f)
+        
+        # Store username and hashed password
+        credentials['username'] = username
+        credentials['password_hash'] = hashlib.sha256(password.encode()).hexdigest()
+        
+        with open(_CREDENTIAL_FILE, 'w') as f:
+            json.dump(credentials, f, indent=2)
+        
+        return True
+    except Exception as e:
+        return False
+
+def _load_credentials():
+    """Load saved credentials from local file."""
+    try:
+        if os.path.exists(_CREDENTIAL_FILE):
+            with open(_CREDENTIAL_FILE, 'r') as f:
+                credentials = json.load(f)
+            return credentials.get('username'), credentials.get('password_hash')
+    except Exception:
+        pass
+    return None, None
+
+def _remove_credentials():
+    """Remove saved credentials from local file."""
+    try:
+        if os.path.exists(_CREDENTIAL_FILE):
+            os.remove(_CREDENTIAL_FILE)
+        return True
+    except Exception:
+        return False
+
+def auto_login():
+    """Attempt to automatically log in using saved credentials."""
+    global _current_user, _offline_mode, _server_host, _server_port
+
+    username, password_hash = _load_credentials()
+    if not username or not password_hash:
+        return False
+
+    # Load saved server configuration
+    _load_server_config()
+
+    # Check if server is configured
+    if not _server_host or not _server_port:
+        print("\n  No server configured for auto-login")
+        print("  You will need to select a server manually")
+        return False
+
+    # Auto-enable online mode if we have a saved server
+    if _offline_mode:
+        _offline_mode = False
+        print("\n  ═══════════════════════════════════════════════════════════════")
+        print("  ║  Saved server detected - Enabling Online Mode                ║")
+        print("  ═══════════════════════════════════════════════════════════════")
+
+    # Connect to server if not already connected
+    if not _server_client or not _server_client.sock:
+        print(f"\n  Connecting to saved server: {_server_host}:{_server_port}")
+        success, msg = connect_to_server(auto_login=False)
+        if not success:
+            print(f"  Connection failed: {msg}")
+            _offline_mode = True  # Revert to offline if connection fails
+            return False
+        print(f"  ✓ Connected to server!")
+
+    # Try to login with saved credentials
+    print(f"\n  Attempting auto-login for: {username}")
+
+    # For auto-login, we send a special request with the stored hash
+    response = _server_client.auto_login(username, password_hash)
+
+    if response and response.get('success'):
+        print(f"  ✓ Auto-login successful! Welcome back, {username}!")
+        set_current_user(username)
+        return True
+    else:
+        print(f"  Auto-login failed. Please login manually.")
+        _remove_credentials()
+        _offline_mode = True  # Revert to offline if login fails
+        return False
 
 def view_profile(username=None):
     """View a user's profile."""
@@ -2351,38 +2580,69 @@ def list_all_users():
 def configure_server_connection():
     """Configure server host and port."""
     global _server_host, _server_port, _server_client
-    
+
     print("\n  ╔══════════════════════════════════════════════════════════╗")
     print("  ║           SERVER CONNECTION SETTINGS                     ║")
     print("  ╠══════════════════════════════════════════════════════════╣")
-    print(f"  ║  Current Host: {_server_host:<42}║")
-    print(f"  ║  Current Port: {_server_port:<42}║")
+    host_display = _server_host if _server_host else "(not configured)"
+    port_display = _server_port if _server_port else "(not configured)"
+    print(f"  ║  Current Host: {host_display:<42}║")
+    print(f"  ║  Current Port: {port_display:<42}║")
     print("  ╠══════════════════════════════════════════════════════════╣")
-    
+    print("  ║  1. Change Server                                        ║")
+    print("  ║  2. Clear Saved Server Settings                          ║")
+    print("  ║  0. Back                                                 ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+
     try:
-        host = input(f"  Enter server host [{_server_host}]: ").strip()
-        if host:
+        choice = input("  Choice: ").strip()
+
+        if choice == '0':
+            return
+        elif choice == '1':
+            # Disconnect existing connection
+            if _server_client:
+                _server_client.disconnect()
+                _server_client = None
+
+            # Get new server details
+            host = input("  Enter server host/IP: ").strip()
+            if not host:
+                print("  Cancelled.")
+                return
+
+            port_str = input("  Enter server port [65433]: ").strip()
+            if not port_str:
+                port_str = '65433'
+
             _server_host = host
-        
-        port_str = input(f"  Enter server port [{_server_port}]: ").strip()
-        if port_str:
             _server_port = int(port_str)
-        
-        # Disconnect existing connection
-        if _server_client:
-            _server_client.disconnect()
-            _server_client = None
-        
-        print(f"\n  Server settings updated: {_server_host}:{_server_port}")
-        
-        # Test connection
-        success, msg = connect_to_server()
-        if success:
-            print(f"  ✓ Connected to server at {_server_host}:{_server_port}")
-        else:
-            print(f"  ✗ {msg}")
-            print("  (Settings saved, will try to connect on next operation)")
-            print("  Make sure the server is running: python3 server.py")
+
+            # Save configuration
+            _save_server_config(_server_host, _server_port)
+
+            print(f"\n  ✓ Server configured: {_server_host}:{_server_port}")
+            print("  Server settings saved for future sessions")
+
+            # Test connection
+            success, msg = connect_to_server()
+            if success:
+                print(f"  ✓ Connected to server at {_server_host}:{_server_port}")
+            else:
+                print(f"  ✗ {msg}")
+                print("  (Settings saved, will try to connect on next operation)")
+                print("  Make sure the server is running: python3 server.py")
+
+        elif choice == '2':
+            _remove_server_config()
+            _server_host = None
+            _server_port = None
+            if _server_client:
+                _server_client.disconnect()
+                _server_client = None
+            print("\n  ✓ Server settings cleared")
+            print("  You will be prompted to choose a server next time")
+
     except ValueError:
         print("  Invalid port number.")
     except EOFError:
@@ -2404,20 +2664,31 @@ def auth_menu():
             print("  ╚══════════════════════════════════════════════════════════╝")
         else:
             if _current_user:
-                print(f"  ║  Logged in as: {_current_user:<40}║")
+                print(f"  ║  Logged in as: {_current_user:<40}  ║")
                 print("  ╠══════════════════════════════════════════════════════════╣")
                 print("  ║  1. View My Profile                                      ║")
                 print("  ║  2. View Another User's Profile                          ║")
                 print("  ║  3. List All Users                                       ║")
                 print("  ║  4. Logout                                               ║")
+                # Check if credentials are saved
+                saved_user, _ = _load_credentials()
+                if saved_user == _current_user:
+                    print("  ║  5. Disable Auto-Login (clear saved credentials)         ║")
+                else:
+                    print("  ║  5. Save Credentials for Auto-Login                      ║")
             else:
                 print("  ║  Not logged in                                           ║")
                 print("  ╠══════════════════════════════════════════════════════════╣")
                 print("  ║  1. Login                                                ║")
                 print("  ║  2. Register New Account                                 ║")
+                # Check if credentials are saved
+                saved_user, _ = _load_credentials()
+                if saved_user:
+                    print(f"  ║  3. Auto-Login as '{saved_user}'                         ║")
+                    print("  ║  4. Clear Saved Credentials                              ║")
             print("  ╠══════════════════════════════════════════════════════════╣")
-            print("  ║  5. Configure Server Connection                          ║")
-        
+            print("  ║  6. Configure Server Connection                          ║")
+
         print("  ║  0. Back to Main Menu                                    ║")
         print("  ╚══════════════════════════════════════════════════════════╝")
 
@@ -2428,11 +2699,11 @@ def auth_menu():
 
         if choice == '0':
             break
-        
+
         if _offline_mode:
             print("\n  Please disable offline mode from the main menu first.")
             continue
-        
+
         if choice == '1':
             if _current_user:
                 view_profile(_current_user)
@@ -2455,13 +2726,43 @@ def auth_menu():
             if _current_user:
                 list_all_users()
             else:
-                print("  Please login or register first.")
+                # Auto-login if credentials saved
+                saved_user, _ = _load_credentials()
+                if saved_user:
+                    auto_login()
+                    if _current_user:
+                        clear_screen()
+                else:
+                    print("  Please login or register first.")
         elif choice == '4':
             if _current_user:
                 logout_user()
             else:
-                print("  Not logged in.")
+                # Clear saved credentials
+                if _remove_credentials():
+                    print("  Saved credentials cleared.")
+                else:
+                    print("  No saved credentials to clear.")
         elif choice == '5':
+            if _current_user:
+                # Save or disable auto-login
+                saved_user, _ = _load_credentials()
+                if saved_user == _current_user:
+                    _remove_credentials()
+                    print("  Auto-login disabled. Credentials cleared.")
+                else:
+                    # Need password to save credentials
+                    print("\n  To save credentials for auto-login, please login again.")
+                    print("  (This is required to store your password securely)")
+                    try:
+                        ans = input("  Login now? [Y/n]: ").strip().lower()
+                    except EOFError:
+                        ans = 'n'
+                    if ans in ('y', 'yes', ''):
+                        login_user()
+            else:
+                print("  Not logged in.")
+        elif choice == '6':
             configure_server_connection()
 
 
@@ -3649,6 +3950,8 @@ def analyze_online_game_menu():
                 print("  Invalid input. Enter a number, 'A', or '0'.")
 
 def main():
+    global _offline_mode, _server_host, _server_port, _server_client
+    
     print(BANNER)
     print("  Initialising opening book...")
     book=OpeningBook()
@@ -3659,6 +3962,29 @@ def main():
     print("  Tablebases ready (KQK, KRK, KPK, KBNK)")
     print("  Neural network evaluator ready")
     elo_sys=EloSystem()
+    print()
+
+    # Load saved server configuration first
+    _load_server_config()
+    
+    # Auto-connect to saved server if available (even without saved credentials)
+    if _server_host and _server_port and _offline_mode:
+        print(f"\n  Found saved server: {_server_host}:{_server_port}")
+        print("  Attempting to connect...")
+        _offline_mode = False  # Enable online mode
+        success, msg = connect_to_server(auto_login=False)
+        if success:
+            print(f"  ✓ Connected to server!")
+            # Try auto-login if credentials are saved
+            auto_login()
+        else:
+            print(f"  Connection failed: {msg}")
+            print("  Starting in offline mode...")
+            _offline_mode = True
+    else:
+        # Attempt auto-login if credentials are saved
+        # This will also enable online mode automatically
+        auto_login()
     print()
 
     while True:
@@ -3716,7 +4042,7 @@ def main():
         elif choice=='9':
             # Toggle offline mode
             if _offline_mode:
-                print("\n  ╔══════════════════════════════════════════════════════════╗")
+                print("\n  ╔═══════════════════════════════════════════════════════════╗")
                 print("  ║              ENABLE ONLINE MODE?                          ║")
                 print("  ╠═══════════════════════════════════════════════════════════╣")
                 print("  ║  This will enable:                                        ║")
@@ -3730,7 +4056,11 @@ def main():
                     ans = 'n'
                 if ans in ('y', 'yes', ''):
                     set_offline_mode(False)
+                    # Load saved server configuration
+                    _load_server_config()
                     print("  ║  Online mode enabled!                                    ║")
+                    # Attempt auto-login
+                    auto_login()
                     print("  ╚══════════════════════════════════════════════════════════╝")
                 else:
                     print("  ║  Remaining in offline mode.                              ║")
