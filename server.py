@@ -35,6 +35,7 @@ MAX_GAMES_PER_USER = 3
 # ════════════════════════════════════════════════════════════════════════
 MSG_REGISTER = 'REGISTER'
 MSG_LOGIN = 'LOGIN'
+MSG_AUTO_LOGIN = 'AUTO_LOGIN'
 MSG_LOGOUT = 'LOGOUT'
 MSG_GET_PROFILE = 'GET_PROFILE'
 MSG_SAVE_GAME = 'SAVE_GAME'
@@ -165,15 +166,31 @@ class DatabaseManager:
         """
         with self.lock:
             db = self._load_db()
-            
+
             if username not in db['users']:
                 return False, "Invalid username or password"
-            
+
             password_hash = self._hash_password(password)
             if db['users'][username]['password_hash'] != password_hash:
                 return False, "Invalid username or password"
-            
+
             return True, "Login successful"
+
+    def authenticate_user_with_hash(self, username, password_hash):
+        """
+        Authenticate user login using stored password hash (for auto-login).
+        Returns (success, message) tuple.
+        """
+        with self.lock:
+            db = self._load_db()
+
+            if username not in db['users']:
+                return False, "Invalid username or password"
+
+            if db['users'][username]['password_hash'] != password_hash:
+                return False, "Invalid username or password"
+
+            return True, "Auto-login successful"
     
     def get_user_profile(self, username):
         """
@@ -689,14 +706,15 @@ class ClientHandler:
             'success': success,
             'data': data
         }).encode()
+
         header = struct.pack('>I', len(payload))
         try:
             self.conn.sendall(header + payload)
             return True
-        except:
+        except Exception as e:
             return False
 
-    def recv(self, timeout=1.0):
+    def recv(self, timeout=30.0):
         """Receive a message from the client."""
         self.conn.settimeout(timeout)
         try:
@@ -707,13 +725,14 @@ class ClientHandler:
                         payload = self.pending[4:4 + length]
                         self.pending = self.pending[4 + length:]
                         return json.loads(payload.decode())
+
                 chunk = self.conn.recv(4096)
                 if not chunk:
                     return None
                 self.pending += chunk
         except socket.timeout:
             return None
-        except:
+        except Exception as e:
             return None
 
     def handle_register(self, data):
@@ -729,12 +748,22 @@ class ClientHandler:
         """Handle user login."""
         username = data.get('username', '').strip()
         password = data.get('password', '')
-        
+
         success, message = self.db.authenticate_user(username, password)
         if success:
             self.logged_in_user = username
         self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
-    
+
+    def handle_auto_login(self, data):
+        """Handle auto-login using stored password hash."""
+        username = data.get('username', '').strip()
+        password_hash = data.get('password_hash', '')
+
+        success, message = self.db.authenticate_user_with_hash(username, password_hash)
+        if success:
+            self.logged_in_user = username
+        self.send(RESP_SUCCESS if success else RESP_ERROR, message, success)
+
     def handle_get_profile(self, data):
         """Handle profile request."""
         username = data.get('username', '').strip()
@@ -932,6 +961,9 @@ class ClientHandler:
 
     def handle_request(self):
         """Main request handling loop."""
+        print(f"  [INFO] Client connected: {self.addr[0]}:{self.addr[1]}", flush=True)
+
+        # Main request handling loop
         while True:
             msg = self.recv(timeout=30.0)
             if not msg:
@@ -944,6 +976,8 @@ class ClientHandler:
                 self.handle_register(data)
             elif msg_type == MSG_LOGIN:
                 self.handle_login(data)
+            elif msg_type == MSG_AUTO_LOGIN:
+                self.handle_auto_login(data)
             elif msg_type == MSG_LOGOUT:
                 # Leave queue if in one
                 if self.matchmaking and self.logged_in_user:
@@ -1043,7 +1077,7 @@ class ChessServer:
                 try:
                     self.server_socket.settimeout(1.0)
                     conn, addr = self.server_socket.accept()
-                    print(f"  [INFO] New connection from {addr[0]}:{addr[1]}")
+                    print(f"  [INFO] New connection from {addr[0]}:{addr[1]}", flush=True)
 
                     handler = ClientHandler(conn, addr, self.db_manager, self.matchmaking)
                     client_thread = threading.Thread(
@@ -1070,7 +1104,7 @@ class ChessServer:
         try:
             handler.handle_request()
         except Exception as e:
-            print(f"  [ERROR] Client handler error: {e}")
+            print(f"  [ERROR] Client handler error: {e}", flush=True)
         finally:
             handler.close()
             if handler in self.clients:
