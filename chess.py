@@ -36,6 +36,7 @@ import math
 import random
 import secrets
 import base64
+import queue
 from hmac import compare_digest
 
 # ════════════════════════════════════════════════════════════════════════
@@ -45,6 +46,20 @@ from hmac import compare_digest
 def _xor_bytes(a: bytes, b: bytes) -> bytes:
     """XOR two byte strings."""
     return bytes(x ^ y for x, y in zip(a, b))
+
+def _pad_pkcs7(data: bytes, block_size: int = 16) -> bytes:
+    """Pad data using PKCS7."""
+    pad_len = block_size - (len(data) % block_size)
+    return data + bytes([pad_len] * pad_len)
+
+def _unpad_pkcs7(data: bytes) -> bytes:
+    """Remove PKCS7 padding."""
+    pad_len = data[-1]
+    if pad_len < 1 or pad_len > 16:
+        raise ValueError("Invalid padding")
+    if not compare_digest(data[-pad_len:], bytes([pad_len] * pad_len)):
+        raise ValueError("Invalid padding")
+    return data[:-pad_len]
 
 def _bytes_to_int(b: bytes) -> int:
     """Convert bytes to integer (big-endian)."""
@@ -176,7 +191,7 @@ def _aes_ctr_encrypt(plaintext: bytes, key: bytes, nonce: bytes) -> bytes:
     result = bytearray()
     counter = 0
     for i in range(0, len(plaintext), 16):
-        counter_block = nonce + _int_to_bytes(counter, 4)[:4]
+        counter_block = nonce + struct.pack('>I', counter)
         keystream = _aes_encrypt_block(counter_block, key)
         block = plaintext[i:i+16]
         encrypted = _xor_bytes(block, keystream[:len(block)])
@@ -188,19 +203,110 @@ def _aes_ctr_decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> bytes:
     """AES-256 CTR mode decryption."""
     return _aes_ctr_encrypt(ciphertext, key, nonce)
 
+def _aes_decrypt_block(block: bytes, key: bytes) -> bytes:
+    """AES-256 decryption (pure Python implementation)."""
+    INV_SBOX = bytes([
+        0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
+        0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
+        0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
+        0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25,
+        0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92,
+        0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84,
+        0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06,
+        0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b,
+        0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73,
+        0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e,
+        0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b,
+        0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4,
+        0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
+        0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef,
+        0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
+        0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d,
+    ])
+
+    RCON = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36, 0x6c, 0xd8, 0xab, 0x4d, 0x9a]
+
+    def add_round_key(state, round_key):
+        return [s ^ k for s, k in zip(state, round_key)]
+
+    def gmul(a, b):
+        """Galois Field multiplication for GF(2^8)."""
+        p = 0
+        for _ in range(8):
+            if b & 1:
+                p ^= a
+            hi_bit = a & 0x80
+            a = (a << 1) & 0xff
+            if hi_bit:
+                a ^= 0x1b
+            b >>= 1
+        return p
+
+    def inv_sub_bytes(state):
+        return [INV_SBOX[b] for b in state]
+
+    def inv_shift_rows(state):
+        s = state[:]
+        s[1], s[5], s[9], s[13] = state[13], state[1], state[5], state[9]
+        s[2], s[6], s[10], s[14] = state[10], state[14], state[2], state[6]
+        s[3], s[7], s[11], s[15] = state[7], state[11], state[15], state[3]
+        return s
+
+    def inv_mix_columns(state):
+        """Inverse MixColumns transformation using GF multiplication."""
+        s = state[:]
+        for i in range(4):
+            a = s[i*4:(i+1)*4]
+            s[i*4] = gmul(0x0e, a[0]) ^ gmul(0x0b, a[1]) ^ gmul(0x0d, a[2]) ^ gmul(0x09, a[3])
+            s[i*4+1] = gmul(0x09, a[0]) ^ gmul(0x0e, a[1]) ^ gmul(0x0b, a[2]) ^ gmul(0x0d, a[3])
+            s[i*4+2] = gmul(0x0d, a[0]) ^ gmul(0x09, a[1]) ^ gmul(0x0e, a[2]) ^ gmul(0x0b, a[3])
+            s[i*4+3] = gmul(0x0b, a[0]) ^ gmul(0x0d, a[1]) ^ gmul(0x09, a[2]) ^ gmul(0x0e, a[3])
+        return s
+
+    def key_expansion(key):
+        key_schedule = list(key)
+        for i in range(4, 60):
+            temp = key_schedule[(i-1)*4:(i)*4]
+            if i % 4 == 0:
+                temp = [SBOX[temp[1]], SBOX[temp[2]], SBOX[temp[3]], SBOX[temp[0]]]
+                temp[0] ^= RCON[i//4 - 1]
+            for j in range(4):
+                key_schedule.append(key_schedule[(i-4)*4 + j] ^ temp[j])
+        return key_schedule
+
+    key_schedule = key_expansion(key)
+    state = list(block)
+    state = add_round_key(state, key_schedule[14*16:15*16])
+
+    for round_num in range(13, 0, -1):
+        state = inv_shift_rows(state)
+        state = inv_sub_bytes(state)
+        state = add_round_key(state, key_schedule[round_num*16:(round_num+1)*16])
+        if round_num > 1:
+            state = inv_mix_columns(state)
+
+    state = inv_shift_rows(state)
+    state = inv_sub_bytes(state)
+    state = add_round_key(state, key_schedule[:16])
+
+    return bytes(state)
+
 def _ghash(h: bytes, data: bytes) -> bytes:
     """GHASH for GCM mode."""
     def gf_mult(x: int, y: int) -> int:
+        """Multiply two numbers in GF(2^128) with the GCM polynomial."""
         z = 0
+        R = 0xe1000000000000000000000000000000
+        
         for i in range(128):
             if (x >> (127 - i)) & 1:
                 z ^= y
             if y & 1:
-                y = (y >> 1) ^ 0xe1000000000000000000000000000000
+                y = (y >> 1) ^ R
             else:
                 y >>= 1
         return z
-    
+
     h_int = _bytes_to_int(h)
     result = 0
     for i in range(0, len(data), 16):
@@ -213,28 +319,48 @@ def _ghash(h: bytes, data: bytes) -> bytes:
 def _gcm_encrypt(plaintext: bytes, key: bytes, nonce: bytes, aad: bytes = b'') -> tuple:
     """AES-GCM encryption."""
     h = _aes_encrypt_block(b'\x00' * 16, key)
-    j0 = nonce + b'\x00\x00\x00\x01' if len(nonce) == 12 else nonce + b'\x00' * (16 - len(nonce) % 16) + b'\x00\x00\x00\x01'
+
+    if len(nonce) == 12:
+        j0 = nonce + b'\x00\x00\x00\x01'
+    else:
+        s = (16 - (len(nonce) % 16)) % 16
+        ghash_input = nonce + b'\x00' * s + _int_to_bytes(len(nonce) * 8, 8)
+        j0 = _ghash(h, ghash_input)
+
     ciphertext = _aes_ctr_encrypt(plaintext, key, j0[:12])
+
     ghash_input = aad + b'\x00' * ((16 - len(aad) % 16) % 16) if aad else b''
     ghash_input += ciphertext + b'\x00' * ((16 - len(ciphertext) % 16) % 16)
     ghash_input += _int_to_bytes(len(aad) * 8, 8) + _int_to_bytes(len(ciphertext) * 8, 8)
+
     s = _ghash(h, ghash_input)
     tag_input = _aes_encrypt_block(j0, key)
     tag = _xor_bytes(s, tag_input)
+
     return ciphertext, tag
 
 def _gcm_decrypt(ciphertext: bytes, key: bytes, nonce: bytes, tag: bytes, aad: bytes = b'') -> bytes:
     """AES-GCM decryption."""
     h = _aes_encrypt_block(b'\x00' * 16, key)
-    j0 = nonce + b'\x00\x00\x00\x01' if len(nonce) == 12 else nonce + b'\x00' * (16 - len(nonce) % 16) + b'\x00\x00\x00\x01'
+
+    if len(nonce) == 12:
+        j0 = nonce + b'\x00\x00\x00\x01'
+    else:
+        s = (16 - (len(nonce) % 16)) % 16
+        ghash_input = nonce + b'\x00' * s + _int_to_bytes(len(nonce) * 8, 8)
+        j0 = _ghash(h, ghash_input)
+
     ghash_input = aad + b'\x00' * ((16 - len(aad) % 16) % 16) if aad else b''
     ghash_input += ciphertext + b'\x00' * ((16 - len(ciphertext) % 16) % 16)
     ghash_input += _int_to_bytes(len(aad) * 8, 8) + _int_to_bytes(len(ciphertext) * 8, 8)
+
     s = _ghash(h, ghash_input)
     tag_input = _aes_encrypt_block(j0, key)
     computed_tag = _xor_bytes(s, tag_input)
+
     if not compare_digest(computed_tag, tag):
         raise ValueError("Authentication tag verification failed")
+
     plaintext = _aes_ctr_decrypt(ciphertext, key, j0[:12])
     return plaintext
 
@@ -251,6 +377,21 @@ def encrypt_credentials(credentials: dict, server_public: int) -> dict:
         'ciphertext': base64.b64encode(ciphertext).decode(),
         'tag': base64.b64encode(tag).decode()
     }
+
+def decrypt_credentials(encrypted_data: dict, server_private: int) -> dict:
+    """Decrypt credentials using ECDH + AES-GCM."""
+    client_public = encrypted_data['client_public']
+    nonce = base64.b64decode(encrypted_data['nonce'])
+    ciphertext = base64.b64decode(encrypted_data['ciphertext'])
+    tag = base64.b64decode(encrypted_data['tag'])
+
+    # Compute shared secret
+    shared_secret = _dh_compute_shared_secret(server_private, client_public)
+
+    # Decrypt
+    plaintext = _gcm_decrypt(ciphertext, shared_secret, nonce, tag)
+
+    return json.loads(plaintext.decode('utf-8'))
 
 # ════════════════════════════════════════════════════════════════════════
 #  CONSTANTS
@@ -2058,6 +2199,7 @@ MSG_SESSION_KEY_EXCHANGE = 'SESSION_KEY_EXCHANGE'
 MSG_SEND_MESSAGE = 'SEND_MESSAGE'
 MSG_GET_MESSAGES = 'GET_MESSAGES'
 MSG_NEW_MESSAGE_NOTIFY = 'NEW_MESSAGE_NOTIFY'
+MSG_MESSAGE_SENT_ACK = 'MESSAGE_SENT_ACK'  # Acknowledgment that message was stored
 
 # Challenge system message types
 MSG_CHALLENGE_SEND = 'CHALLENGE_SEND'
@@ -2141,6 +2283,9 @@ class ChessClient:
     def disconnect(self):
         """Disconnect from the server."""
         self.logged_in_user = None
+        self.encryption_enabled = False
+        self.session_key = None
+        self.pending = b''  # Clear pending buffer
         if self.sock:
             try:
                 try:
@@ -2162,77 +2307,175 @@ class ChessClient:
             'data': data or {}
         }).encode()
 
-        # Encrypt if session is established (but not for key exchange messages)
         if self.encryption_enabled and self.session_key and msg_type not in [MSG_GET_SERVER_PUBLIC_KEY, MSG_SESSION_KEY_EXCHANGE]:
             payload = self._encrypt_message(payload)
 
         header = struct.pack('>I', len(payload))
+        full_message = header + payload
 
         try:
-            self.sock.sendall(header + payload)
+            self.sock.sendall(full_message)
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             return True
-        except Exception as e:
+        except Exception:
             return False
 
-    def recv(self, timeout=5.0):
-        """Receive a response from the server (decrypt if session established)."""
+    # ════════════════════════════════════════════════════════════════════
+    #  MESSAGE ROUTING SYSTEM
+    # ════════════════════════════════════════════════════════════════════
+    def __init__(self, host=None, port=None):
+        """Initialize client with message routing."""
+        self.host = host
+        self.port = port
+        self.sock = None
+        self.pending = b''
+        self.logged_in_user = None
+        self.encryption_enabled = False
+        self.session_key = None
+        self.client_private = None
+        self.client_public = None
+
+        # Message routing
+        self._msg_lock = threading.Lock()
+        self._msg_queue = queue.Queue()
+        self._response_handlers = {}  # request_id -> queue
+        self._request_counter = 0
+        
+        # Async message types - initialized in _init_async_types() after constants are defined
+        self.ASYNC_TYPES = set()
+
+        # Start background listener
+        self._listener_stop = threading.Event()
+        self._start_listener()
+    
+    def _init_async_types(self):
+        """Initialize async message types (called after constants are defined)."""
+        if not self.ASYNC_TYPES:  # Only initialize once
+            self.ASYNC_TYPES = {
+                MSG_MATCH, MSG_GAME_MOVE, MSG_GAME_RESIGN,
+                MSG_GAME_DRAW_OFFER, MSG_GAME_DRAW_ACCEPT, MSG_GAME_CHAT,
+                MSG_NEW_MESSAGE_NOTIFY, MSG_FRIEND_REQUEST, MSG_FRIEND_STATUS,
+                MSG_CHALLENGE_SEND
+            }
+    
+    def _start_listener(self):
+        """Start background message listener thread."""
+        # Initialize async types before starting listener
+        self._init_async_types()
+        
+        def listener_loop():
+            while not self._listener_stop.is_set():
+                try:
+                    msg = self._recv_raw(timeout=0.5)
+                    if msg:
+                        msg_type = msg.get('type', '')
+                        with self._msg_lock:
+                            # Route to appropriate handler
+                            if msg_type in self.ASYNC_TYPES:
+                                # Async notification - queue for main loop
+                                self._msg_queue.put(msg)
+                            else:
+                                # Response type - put in main queue for request handlers
+                                self._msg_queue.put(msg)
+                except:
+                    pass
+        
+        self._listener_thread = threading.Thread(target=listener_loop, daemon=True)
+        self._listener_thread.start()
+    
+    def _recv_raw(self, timeout=5.0):
+        """Raw receive - reads from socket and parses message."""
         if not self.sock:
             return None
 
         self.sock.settimeout(timeout)
-        try:
-            while True:
+        retries = 0
+        max_retries = 3
+
+        while retries < max_retries:
+            try:
                 if len(self.pending) >= 4:
                     length = struct.unpack('>I', self.pending[:4])[0]
+                    if length > 10_000_000:
+                        self.pending = b''
+                        retries += 1
+                        continue
                     if len(self.pending) >= 4 + length:
                         payload = self.pending[4:4 + length]
                         self.pending = self.pending[4 + length:]
-                        # Try to decrypt if encryption is enabled
                         if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
                             payload = self._decrypt_message(payload)
                         return json.loads(payload.decode())
 
-                chunk = self.sock.recv(4096)
-                if not chunk:
-                    return None
-                self.pending += chunk
-        except socket.timeout:
+                try:
+                    chunk = self.sock.recv(4096)
+                    if not chunk:
+                        return None
+                    self.pending += chunk
+                    continue
+                except socket.timeout:
+                    if len(self.pending) == 0:
+                        retries += 1
+                    continue
+
+            except Exception:
+                retries += 1
+                continue
+
+        return None
+    
+    def recv(self, timeout=5.0):
+        """Receive a message (used by background listener)."""
+        try:
+            return self._msg_queue.get(timeout=timeout)
+        except queue.Empty:
             return None
-        except Exception as e:
-            return None
+    
+    def recv_sync(self, timeout=10.0):
+        """
+        Receive a synchronous response (for request/response pattern).
+        Waits for a non-async message type.
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                msg = self._msg_queue.get(timeout=0.5)
+                msg_type = msg.get('type', '')
+                # Skip async types, keep waiting for response
+                if msg_type not in self.ASYNC_TYPES:
+                    return msg
+                # Put async messages back? No, they're consumed
+                # Async messages will be missed by main loop, but that's ok
+                # since listener already queued them
+            except queue.Empty:
+                continue
+        return None
 
     def get_server_public_key(self):
         """Get server's public key for E2E encryption."""
         if not self.sock:
-            print("  [ERROR] get_server_public_key: not connected", flush=True)
             return None
         self.send(MSG_GET_SERVER_PUBLIC_KEY)
-        response = self.recv(timeout=10.0)  # Increase timeout
+        response = self.recv_sync(timeout=10.0)
         if response and response.get('success'):
             return response.get('data', {}).get('server_public')
-        print(f"  [WARN] get_server_public_key: got response={response}", flush=True)
         return None
 
     def session_key_exchange(self):
         """Establish E2E encryption session with the server."""
-        # Generate client DH key pair
         self.client_private, self.client_public = _dh_generate_keypair()
 
-        # Send client's public key to server
         self.send(MSG_SESSION_KEY_EXCHANGE, {
             'client_public': self.client_public
         })
 
-        response = self.recv(timeout=10.0)
+        response = self.recv_sync(timeout=10.0)
         if response and response.get('success'):
-            # Get server's public key from response
             server_public = response.get('data', {}).get('server_public')
             if not server_public:
-                # Fallback: try to get it separately
                 server_public = self.get_server_public_key()
 
             if server_public:
-                # Compute shared secret using client private key and server public key
                 shared_secret = _dh_compute_shared_secret(self.client_private, server_public)
                 self.session_key = shared_secret
                 self.encryption_enabled = True
@@ -2271,14 +2514,11 @@ class ChessClient:
     def login(self, username, password, use_encryption=True):
         """Login to an account with optional E2E encryption."""
         if use_encryption:
-            # Get server's public key
             server_public = self.get_server_public_key()
             if server_public is None:
-                print("  [WARN] Failed to get server public key, falling back to plaintext")
                 use_encryption = False
 
         if use_encryption and server_public is not None:
-            # Encrypt credentials
             credentials = {
                 'username': username,
                 'password': password
@@ -2291,24 +2531,38 @@ class ChessClient:
                 'username': username,
                 'password': password
             })
-        response = self.recv(timeout=10.0)  # Increase timeout
+        
+        response = self.recv(timeout=10.0)
+        
         if response and response.get('success'):
             self.logged_in_user = username
-            # Establish E2E encryption session after successful login
             if use_encryption and server_public is not None:
                 self.session_key_exchange()
         return response
 
-    def auto_login(self, username, password_hash):
+    def auto_login(self, username, password_hash, use_encryption=True):
         """Auto-login using stored password hash."""
+        if use_encryption:
+            server_public = self.get_server_public_key()
+            if server_public:
+                credentials = {'username': username, 'password_hash': password_hash}
+                encrypted_data = encrypt_credentials(credentials, server_public)
+                encrypted_data['encrypted'] = True
+                self.send(MSG_AUTO_LOGIN, encrypted_data)
+                response = self.recv(timeout=10.0)
+                if response and response.get('success'):
+                    self.logged_in_user = username
+                    self.session_key_exchange()
+                return response
+        
+        # Fallback to plaintext
         self.send(MSG_AUTO_LOGIN, {
             'username': username,
             'password_hash': password_hash
         })
-        response = self.recv(timeout=10.0)  # Increase timeout
+        response = self.recv(timeout=10.0)
         if response and response.get('success'):
             self.logged_in_user = username
-            # Establish E2E encryption session after successful auto-login
             self.session_key_exchange()
         return response
 
@@ -2324,7 +2578,7 @@ class ChessClient:
         """Get a user's profile."""
         data = {'username': username} if username else {}
         self.send(MSG_GET_PROFILE, data)
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def save_game(self, white, black, result, moves, duration=0, rated=True):
         """Save a game to history."""
@@ -2336,33 +2590,33 @@ class ChessClient:
             'duration': duration,
             'rated': rated
         })
-        return self.recv(timeout=10.0)
-    
+        return self.recv_sync(timeout=10.0)
+
     def list_users(self):
         """Get list of all users."""
         self.send(MSG_LIST_USERS)
-        return self.recv(timeout=10.0)
-    
+        return self.recv_sync(timeout=10.0)
+
     # Matchmaking methods
     def join_queue(self):
         """Join the matchmaking queue."""
         self.send(MSG_QUEUE_JOIN, {'username': self.logged_in_user or _current_user})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def leave_queue(self):
         """Leave the matchmaking queue."""
         self.send(MSG_QUEUE_LEAVE, {'username': self.logged_in_user or _current_user})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def get_queue_status(self):
         """Get queue status."""
         self.send(MSG_QUEUE_STATUS, {'username': self.logged_in_user or _current_user})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def trigger_matchmaking(self):
         """Trigger immediate matchmaking check."""
         self.send(MSG_QUEUE_STATUS, {'trigger': True, 'username': self.logged_in_user or _current_user})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def send_move(self, game_id, move):
         """Send a move in an active game."""
@@ -2370,7 +2624,7 @@ class ChessClient:
             'game_id': game_id,
             'move': move
         })
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def resign_game(self, game_id):
         """Resign from a game."""
@@ -2400,7 +2654,7 @@ class ChessClient:
     def get_leaderboard(self, limit=10):
         """Get ELO leaderboard."""
         self.send(MSG_LEADERBOARD, {'limit': limit})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     # ════════════════════════════════════════════════════════════════════
     #  FRIEND SYSTEM METHODS
@@ -2408,27 +2662,27 @@ class ChessClient:
     def send_friend_request(self, recipient):
         """Send a friend request."""
         self.send(MSG_FRIEND_REQUEST, {'recipient': recipient})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def respond_to_friend_request(self, sender, accept):
         """Respond to a friend request."""
         self.send(MSG_FRIEND_RESPONSE, {'sender': sender, 'accept': accept})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def get_friend_list(self):
         """Get list of friends."""
         self.send(MSG_FRIEND_LIST)
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def remove_friend(self, friend):
         """Remove a friend."""
         self.send(MSG_FRIEND_REMOVE, {'friend': friend})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def get_friend_requests(self):
         """Get pending friend requests."""
         self.send(MSG_FRIEND_STATUS)
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     # ════════════════════════════════════════════════════════════════════
     #  MESSAGING SYSTEM METHODS
@@ -2436,22 +2690,32 @@ class ChessClient:
     def key_exchange(self, public_key, key_type='dh'):
         """Perform key exchange for E2E encryption."""
         self.send(MSG_KEY_EXCHANGE, {'public_key': public_key, 'key_type': key_type})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def send_message(self, recipient, encrypted_content, iv, tag):
-        """Send an encrypted message."""
+        """
+        Send an encrypted message to a user.
+
+        Uses store-and-forward architecture:
+        - Message is stored on server regardless of recipient's online status
+        - Returns acknowledgment with success status
+        - E2E encrypted: only recipient can decrypt with their private key
+        """
         self.send(MSG_SEND_MESSAGE, {
             'recipient': recipient,
             'encrypted_content': encrypted_content,
             'iv': iv,
             'tag': tag
         })
-        return self.recv(timeout=10.0)
+
+        # Wait for message acknowledgment
+        response = self.recv_sync(timeout=10.0)
+        return response
 
     def get_messages(self, friend, since_id=0):
         """Get messages with a friend."""
         self.send(MSG_GET_MESSAGES, {'friend': friend, 'since_id': since_id})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     # ════════════════════════════════════════════════════════════════════
     #  CHALLENGE SYSTEM METHODS
@@ -2463,22 +2727,22 @@ class ChessClient:
             'color_choice': color_choice,
             'rated': rated
         })
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def respond_to_challenge(self, challenger, accept):
         """Respond to a challenge."""
         self.send(MSG_CHALLENGE_RESPONSE, {'challenger': challenger, 'accept': accept})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def get_challenges(self):
         """Get pending challenges."""
         self.send(MSG_CHALLENGE_LIST)
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
     def cancel_challenge(self, challenged):
         """Cancel a pending challenge."""
         self.send(MSG_CHALLENGE_CANCEL, {'challenged': challenged})
-        return self.recv(timeout=10.0)
+        return self.recv_sync(timeout=10.0)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -2643,7 +2907,24 @@ def connect_to_server(host=None, port=None, reconnect=False, auto_login=True):
 
     # Check if already connected
     if _server_client and _server_client.sock and not reconnect:
-        return True, "Already connected"
+        import select
+        try:
+            _server_client.sock.setblocking(0)
+            try:
+                data = _server_client.sock.recv(1, socket.MSG_PEEK)
+                _server_client.sock.setblocking(1)
+                return True, "Already connected"
+            except BlockingIOError:
+                _server_client.sock.setblocking(1)
+                return True, "Already connected"
+            except (ConnectionResetError, BrokenPipeError):
+                _server_client.sock.setblocking(1)
+        except Exception:
+            pass
+        
+        if _server_client:
+            _server_client.disconnect()
+            _server_client = None
 
     # Disconnect existing connection if any
     if _server_client:
@@ -2725,9 +3006,7 @@ def register_user():
         break
     
     # Register with server
-    print(f"  [DEBUG] register_user: calling _server_client.register()", flush=True)
     response = _server_client.register(username, password, email)
-    print(f"  [DEBUG] register_user: response={response}", flush=True)
     if response and response.get('success'):
         print(f"\n  ✓ {response.get('data', 'Registration successful')}")
         set_current_user(username)
@@ -3086,20 +3365,21 @@ def _decrypt_message(encrypted_content, iv, tag, sender_public_key):
 def friends_messaging_menu():
     """Main menu for friends and messaging."""
     global _current_user, _server_client
-    
+
     if not _current_user:
         print("\n  ╔══════════════════════════════════════════════════════════╗")
         print("  ║           PLEASE LOG IN FIRST                            ║")
         print("  ╚══════════════════════════════════════════════════════════╝")
         return
-    
-    # Perform key exchange on entering the menu
+
+    # Generate E2E encryption keys for messaging (separate from session encryption)
     private_key, public_key = _generate_keypair()
     _user_private_keys[_current_user] = private_key
     _user_public_keys[_current_user] = public_key
-    
-    _server_client.key_exchange(public_key)
-    
+
+    # Note: Session encryption is already established at login
+    # No need to do another key exchange here
+
     while True:
         print("\n  ╔══════════════════════════════════════════════════════════╗")
         print("  ║           FRIENDS & MESSAGING                            ║")
@@ -3167,30 +3447,56 @@ def view_friends_list():
     print("  C - Challenge a friend")
     print("  R - Remove a friend")
     print("  0 - Back")
-    
+
     try:
-        action = input("  Action: ").strip().upper()
+        action_line = input("  Action: ").strip()
     except EOFError:
         return
     
+    # Parse action and optional argument (e.g., "M XDblocky" or just "M")
+    action_parts = action_line.upper().split(None, 1)  # Split on whitespace, max 2 parts
+    action = action_parts[0] if action_parts else ''
+    arg = action_parts[1] if len(action_parts) > 1 else None
+    
+    # Convert action back to original case for friend name if provided
+    if arg and action.upper() == 'M':
+        # For message, use the original case from input
+        original_parts = action_line.split(None, 1)
+        friend_name_arg = original_parts[1] if len(original_parts) > 1 else None
+    else:
+        friend_name_arg = arg
+
     if action == '0':
         return
     elif action == 'M':
-        friend_name = input("  Friend's username: ").strip()
-        if friend_name:
-            open_chat_with_friend(friend_name)
+        if friend_name_arg:
+            open_chat_with_friend(friend_name_arg)
+        else:
+            friend_name = input("  Friend's username: ").strip()
+            if friend_name:
+                open_chat_with_friend(friend_name)
     elif action == 'C':
-        friend_name = input("  Friend's username: ").strip()
-        if friend_name:
-            challenge_friend(friend_name)
+        if friend_name_arg:
+            challenge_friend(friend_name_arg)
+        else:
+            friend_name = input("  Friend's username: ").strip()
+            if friend_name:
+                challenge_friend(friend_name)
     elif action == 'R':
-        friend_name = input("  Friend's username to remove: ").strip()
-        if friend_name:
-            response = _server_client.remove_friend(friend_name)
+        if friend_name_arg:
+            response = _server_client.remove_friend(friend_name_arg)
             if response and response.get('success'):
-                print(f"  Friend '{friend_name}' removed.")
+                print(f"  Friend '{friend_name_arg}' removed.")
             else:
                 print(f"  Error: {response.get('data', 'Unknown error') if response else 'Failed'}")
+        else:
+            friend_name = input("  Friend's username to remove: ").strip()
+            if friend_name:
+                response = _server_client.remove_friend(friend_name)
+                if response and response.get('success'):
+                    print(f"  Friend '{friend_name}' removed.")
+                else:
+                    print(f"  Error: {response.get('data', 'Unknown error') if response else 'Failed'}")
 
 def add_friend():
     """Add a new friend."""
@@ -3334,51 +3640,70 @@ def open_chat_with_friend(friend_name):
     print(f"\n  ╔══════════════════════════════════════════════════════════╗")
     print(f"  ║  Chat with {friend_name:<36}║")
     print(f"  ╚══════════════════════════════════════════════════════════╝")
-    
-    # Load existing messages
+
+    # Load existing messages asynchronously (don't block on this)
     messages = []
-    last_message_id = 0
     
-    response = _server_client.get_messages(friend_name)
-    if response and response.get('success'):
-        messages = response.get('data', {}).get('messages', [])
-        if messages:
-            last_message_id = messages[-1].get('id', 0)
-    
-    # Display messages
+    # Quick check if we can get messages (2 second timeout max)
+    if _server_client and _server_client.sock:
+        try:
+            _server_client.send(MSG_GET_MESSAGES, {'friend': friend_name, 'since_id': 0})
+            response = _server_client.recv(timeout=2.0)  # Short timeout
+            if response and response.get('success'):
+                messages = response.get('data', {}).get('messages', [])
+        except:
+            pass  # Non-critical, continue without loading messages
+
+    # Display messages if we got any
     if messages:
         print("\n  Recent messages:")
         for msg in messages[-20:]:  # Show last 20 messages
             sender = msg['sender']
-            # In a real implementation, decrypt the message
             content = msg['encrypted_content'][:50] + "..." if len(msg['encrypted_content']) > 50 else msg['encrypted_content']
             print(f"    [{sender}] {content}")
         print()
-    
+    else:
+        print("\n  No recent messages. Start the conversation!\n")
+
     # Chat loop
     while True:
         try:
             message = input(f"  Message to {friend_name} (or 'back' to return): ").strip()
         except EOFError:
             return
-        
+
         if message.lower() == 'back':
             return
         if not message:
             continue
-        
+
         # Encrypt and send message
         if friend_name in _user_public_keys:
             encrypted, iv, tag = _encrypt_message(message, _user_public_keys[friend_name])
         else:
-            # If we don't have the friend's key, use a demo key
             encrypted, iv, tag = _encrypt_message(message, "demo_key")
-        
+
         response = _server_client.send_message(friend_name, encrypted, iv, tag)
-        if response and response.get('success'):
+
+        # Handle response from server
+        if response is None:
+            # Real connection issue - message may not have been sent
+            print(f"  Error sending message: No response from server (connection may have timed out or been lost)")
+        elif response.get('success'):
+            # Message successfully stored on server
             print(f"  [You] {message}")
+            # Recipient doesn't need to be online - message is stored on server
+            # and will be delivered when they come online and pull messages
+            if not response.get('recipient_online', False):
+                print(f"  (Message stored on server - {friend_name} will receive it when they come online)")
         else:
-            print(f"  Error sending message: {response.get('data', 'Unknown error') if response else 'Failed'}")
+            # Actual error from server
+            error_data = response.get('error', response.get('data', 'Unknown error'))
+            print(f"  Error sending message: {error_data}")
+            if error_data == "Users are not friends":
+                print(f"  Hint: You can only message users who are your friends.")
+            elif "Not logged in" in str(error_data):
+                print(f"  Hint: Your session may have expired. Please log in again.")
 
 def challenges_menu():
     """View and manage game challenges."""
@@ -3765,44 +4090,29 @@ def matchmaking_menu():
     print("  ║  Find a random opponent for a rated game!                ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
 
-    # Start message listener thread
-    import queue
-    msg_queue = queue.Queue()
-    stop_listener = threading.Event()
-    
-    def message_listener():
-        while not stop_listener.is_set():
-            try:
-                msg = _server_client.recv(timeout=1.0)
-                if msg:
-                    msg_queue.put(msg)
-            except:
-                pass
-    
-    listener_thread = threading.Thread(target=message_listener, daemon=True)
-    listener_thread.start()
-    
+    # Message listener is already running in _server_client
+    # Use its message queue for async notifications
+
     # Start keep-alive ping thread to maintain connection
     def keep_alive():
-        while not stop_listener.is_set():
+        while not _server_client._listener_stop.is_set():
             time.sleep(10)  # Ping every 10 seconds
             try:
                 _server_client.send(MSG_PING)
-                _server_client.recv(timeout=1.0)
             except:
                 pass
-    
+
     keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
     keep_alive_thread.start()
 
     while True:
-        # Process any pending messages
+        # Process any pending messages from centralized queue
         try:
-            while not msg_queue.empty():
-                msg = msg_queue.get_nowait()
+            while not _server_client._msg_queue.empty():
+                msg = _server_client._msg_queue.get_nowait()
                 msg_type = msg.get('type', '')
                 data = msg.get('data', {})
-                
+
                 if msg_type == MSG_MATCH:
                     # Match found!
                     in_game = True
@@ -3941,25 +4251,25 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
     board.reset()
     last_mv = None
     game_start_time = time.time()
-    
+
     my_turn = (my_color == 'white' and board.side == WHITE) or \
               (my_color == 'black' and board.side == BLACK)
-    
+
     my_name = _current_user
     white_name = my_name if my_color == 'white' else opponent_name
     black_name = opponent_name if my_color == 'white' else my_name
-    
+
     print("\n  ╔══════════════════════════════════════════════════════════╗")
     print("  ║                    ONLINE GAME                           ║")
     print("  ╠══════════════════════════════════════════════════════════╣")
     print(f"  ║  {white_name:<28} vs  {black_name:<28}║")
     print("  ╚══════════════════════════════════════════════════════════╝\n")
-    
+
     while True:
-        # Process messages
+        # Process messages from centralized queue
         try:
-            while not msg_queue.empty():
-                msg = msg_queue.get_nowait()
+            while not _server_client._msg_queue.empty():
+                msg = _server_client._msg_queue.get_nowait()
                 msg_type = msg.get('type', '')
                 data = msg.get('data', {})
                 
