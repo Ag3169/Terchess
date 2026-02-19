@@ -23,6 +23,7 @@ import re
 import time
 import secrets
 import base64
+import random
 from datetime import datetime
 from hmac import compare_digest
 
@@ -233,8 +234,12 @@ def _aes_decrypt_block(block: bytes, key: bytes) -> bytes:
             s[i*4+2] = (0x0d * a[0]) ^ (0x09 * a[1]) ^ (0x0e * a[2]) ^ (0x0b * a[3])
             s[i*4+3] = (0x0b * a[0]) ^ (0x0d * a[1]) ^ (0x09 * a[2]) ^ (0x0e * a[3])
         return s
-    
+
+    def add_round_key(state, round_key):
+        return [s ^ k for s, k in zip(state, round_key)]
+
     def gmul(a, b):
+        """Galois Field multiplication for GF(2^8)."""
         p = 0
         for _ in range(8):
             if b & 1:
@@ -245,13 +250,24 @@ def _aes_decrypt_block(block: bytes, key: bytes) -> bytes:
                 a ^= 0x1b
             b >>= 1
         return p
-    
+
+    def inv_mix_columns(state):
+        """Inverse MixColumns transformation using GF multiplication."""
+        s = state[:]
+        for i in range(4):
+            a = s[i*4:(i+1)*4]
+            s[i*4] = gmul(0x0e, a[0]) ^ gmul(0x0b, a[1]) ^ gmul(0x0d, a[2]) ^ gmul(0x09, a[3])
+            s[i*4+1] = gmul(0x09, a[0]) ^ gmul(0x0e, a[1]) ^ gmul(0x0b, a[2]) ^ gmul(0x0d, a[3])
+            s[i*4+2] = gmul(0x0d, a[0]) ^ gmul(0x09, a[1]) ^ gmul(0x0e, a[2]) ^ gmul(0x0b, a[3])
+            s[i*4+3] = gmul(0x0b, a[0]) ^ gmul(0x0d, a[1]) ^ gmul(0x09, a[2]) ^ gmul(0x0e, a[3])
+        return s
+
     def key_expansion(key):
         key_schedule = list(key)
         for i in range(4, 60):
             temp = key_schedule[(i-1)*4:(i)*4]
             if i % 4 == 0:
-                temp = [INV_SBOX[temp[1]], INV_SBOX[temp[2]], INV_SBOX[temp[3]], INV_SBOX[temp[0]]]
+                temp = [SBOX[temp[1]], SBOX[temp[2]], SBOX[temp[3]], SBOX[temp[0]]]
                 temp[0] ^= RCON[i//4 - 1]
             for j in range(4):
                 key_schedule.append(key_schedule[(i-4)*4 + j] ^ temp[j])
@@ -279,7 +295,8 @@ def _aes_ctr_encrypt(plaintext: bytes, key: bytes, nonce: bytes) -> bytes:
     result = bytearray()
     counter = 0
     for i in range(0, len(plaintext), 16):
-        counter_block = nonce + _int_to_bytes(counter, 4)[:4]
+        # Counter block: nonce (12 bytes) + counter (4 bytes, big-endian)
+        counter_block = nonce + struct.pack('>I', counter)
         keystream = _aes_encrypt_block(counter_block, key)
         block = plaintext[i:i+16]
         encrypted = _xor_bytes(block, keystream[:len(block)])
@@ -294,16 +311,24 @@ def _aes_ctr_decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> bytes:
 def _ghash(h: bytes, data: bytes) -> bytes:
     """GHASH for GCM mode."""
     def gf_mult(x: int, y: int) -> int:
+        """Multiply two numbers in GF(2^128) with the GCM polynomial."""
         z = 0
+        # GCM uses bit-wise multiplication in GF(2^128)
+        # The reduction polynomial is x^128 + x^7 + x^2 + x + 1
+        R = 0xe1000000000000000000000000000000
+        
         for i in range(128):
+            # If the i-th bit of x is set, XOR y into z
             if (x >> (127 - i)) & 1:
                 z ^= y
+            # Check if the LSB of y is set (for reduction)
             if y & 1:
-                y = (y >> 1) ^ 0xe1000000000000000000000000000000
+                # Right shift and apply reduction polynomial
+                y = (y >> 1) ^ R
             else:
                 y >>= 1
         return z
-    
+
     h_int = _bytes_to_int(h)
     result = 0
     for i in range(0, len(data), 16):
@@ -317,44 +342,56 @@ def _gcm_encrypt(plaintext: bytes, key: bytes, nonce: bytes, aad: bytes = b'') -
     """AES-GCM encryption."""
     # Generate H (hash key)
     h = _aes_encrypt_block(b'\x00' * 16, key)
-    
-    # Initial counter
-    j0 = nonce + b'\x00\x00\x00\x01' if len(nonce) == 12 else nonce + b'\x00' * (16 - len(nonce) % 16) + b'\x00\x00\x00\x01'
-    
-    # Encrypt plaintext
+
+    # Initial counter J0
+    if len(nonce) == 12:
+        j0 = nonce + b'\x00\x00\x00\x01'
+    else:
+        # For non-12-byte nonces, compute J0 = GHASH(H, nonce || 0^s || 64-bit length)
+        s = (16 - (len(nonce) % 16)) % 16
+        ghash_input = nonce + b'\x00' * s + _int_to_bytes(len(nonce) * 8, 8)
+        j0 = _ghash(h, ghash_input)
+
+    # Encrypt plaintext using CTR mode starting from J0 + 1
     ciphertext = _aes_ctr_encrypt(plaintext, key, j0[:12])
-    
-    # Compute GHASH
+
+    # Compute GHASH for authentication tag
     ghash_input = aad + b'\x00' * ((16 - len(aad) % 16) % 16) if aad else b''
     ghash_input += ciphertext + b'\x00' * ((16 - len(ciphertext) % 16) % 16)
     ghash_input += _int_to_bytes(len(aad) * 8, 8) + _int_to_bytes(len(ciphertext) * 8, 8)
-    
+
     s = _ghash(h, ghash_input)
-    
-    # Compute tag
+
+    # Compute tag: S XOR E(K, J0)
     tag_input = _aes_encrypt_block(j0, key)
     tag = _xor_bytes(s, tag_input)
-    
+
     return ciphertext, tag
 
 def _gcm_decrypt(ciphertext: bytes, key: bytes, nonce: bytes, tag: bytes, aad: bytes = b'') -> bytes:
     """AES-GCM decryption."""
     h = _aes_encrypt_block(b'\x00' * 16, key)
-    
-    j0 = nonce + b'\x00\x00\x00\x01' if len(nonce) == 12 else nonce + b'\x00' * (16 - len(nonce) % 16) + b'\x00\x00\x00\x01'
-    
+
+    # Initial counter J0 (same as encryption)
+    if len(nonce) == 12:
+        j0 = nonce + b'\x00\x00\x00\x01'
+    else:
+        s = (16 - (len(nonce) % 16)) % 16
+        ghash_input = nonce + b'\x00' * s + _int_to_bytes(len(nonce) * 8, 8)
+        j0 = _ghash(h, ghash_input)
+
     # Verify tag first
     ghash_input = aad + b'\x00' * ((16 - len(aad) % 16) % 16) if aad else b''
     ghash_input += ciphertext + b'\x00' * ((16 - len(ciphertext) % 16) % 16)
     ghash_input += _int_to_bytes(len(aad) * 8, 8) + _int_to_bytes(len(ciphertext) * 8, 8)
-    
+
     s = _ghash(h, ghash_input)
     tag_input = _aes_encrypt_block(j0, key)
     computed_tag = _xor_bytes(s, tag_input)
-    
+
     if not compare_digest(computed_tag, tag):
         raise ValueError("Authentication tag verification failed")
-    
+
     plaintext = _aes_ctr_decrypt(ciphertext, key, j0[:12])
     return plaintext
 
@@ -444,6 +481,7 @@ MSG_SEND_MESSAGE = 'SEND_MESSAGE'
 MSG_GET_MESSAGES = 'GET_MESSAGES'
 MSG_NEW_MESSAGE_NOTIFY = 'NEW_MESSAGE_NOTIFY'
 MSG_MESSAGES_DELETED = 'MESSAGES_DELETED'
+MSG_MESSAGE_SENT_ACK = 'MESSAGE_SENT_ACK'  # Acknowledgment that message was stored
 
 # Challenge system message types
 MSG_CHALLENGE_SEND = 'CHALLENGE_SEND'
@@ -709,9 +747,8 @@ class DatabaseManager:
                             db['users'][username]['elo_draws'] += 1
                         else:
                             db['users'][username]['elo_losses'] += 1
-                    print(f"  [DB] Updated stats for {username}: games={db['users'][username]['games_played']}, elo_games={db['users'][username].get('elo_games', 0)}")
                 else:
-                    print(f"  [DB] Warning: User {username} not found in database!")
+                    print(f"  [DB] Warning: User {username} not found in database!", flush=True)
 
             # Calculate and apply ELO changes
             if rated and white in db['users'] and black in db['users']:
@@ -755,10 +792,8 @@ class DatabaseManager:
                     'white': {'old': white_elo, 'new': new_white_elo, 'change': white_change},
                     'black': {'old': black_elo, 'new': new_black_elo, 'change': black_change}
                 }
-                print(f"  [DB] ELO changes calculated: {elo_changes}")
 
             self._save_db(db)
-            print(f"  [DB] Database saved")
 
             if rated:
                 return True, elo_changes
@@ -917,11 +952,12 @@ class DatabaseManager:
         """Store an encrypted message."""
         with self.lock:
             db = self._load_db()
-            
+
             # Verify users are friends
             if not self.are_friends(sender, recipient):
                 return False, "Users are not friends"
-            
+
+            from datetime import timedelta
             message = {
                 'id': len(db['messages']) + 1,
                 'sender': sender,
@@ -930,8 +966,7 @@ class DatabaseManager:
                 'iv': iv,
                 'tag': tag,
                 'created_at': datetime.now().isoformat(),
-                'expires_at': (datetime.now().replace(hour=datetime.now().hour) + 
-                              __import__('datetime').timedelta(hours=12)).isoformat()
+                'expires_at': (datetime.now() + timedelta(hours=12)).isoformat()
             }
             db['messages'].append(message)
             self._save_db(db)
@@ -1037,7 +1072,6 @@ class DatabaseManager:
             if accept:
                 challenge_found['status'] = 'accepted'
                 # Determine colors
-                import random
                 if challenge_found['color_choice'] == 'random':
                     colors = ['white', 'black']
                     random.shuffle(colors)
@@ -1162,7 +1196,6 @@ class MatchmakingManager:
                 game_id = self.game_counter
 
                 # Randomly assign colors
-                import random
                 if random.random() < 0.5:
                     white, black = player1, player2
                     white_handler, black_handler = data1['handler'], data2['handler']
@@ -1460,12 +1493,9 @@ class ClientHandler:
         try:
             self.conn.sendall(header + payload)
             return True
-        except (ConnectionResetError, BrokenPipeError, OSError) as e:
-            # Client disconnected
-            print(f"  [INFO] Send failed (client disconnected): {e}", flush=True)
+        except (ConnectionResetError, BrokenPipeError, OSError):
             return False
-        except Exception as e:
-            print(f"  [ERROR] send error: {e}", flush=True)
+        except Exception:
             return False
 
     def recv(self, timeout=30.0):
@@ -1473,36 +1503,29 @@ class ClientHandler:
         self.conn.settimeout(timeout)
         try:
             while True:
-                # Need at least 4 bytes for header
                 header_size = 4
                 if len(self.pending) >= header_size:
-                    # Check if this might be an encrypted payload
                     length = struct.unpack('>I', self.pending[:4])[0]
-                    # Sanity check on length
-                    if length > 10_000_000:  # 10MB max
-                        self.pending = self.pending[1:]  # Skip byte and retry
+                    if length > 10_000_000:
+                        self.pending = b''
                         continue
                     if len(self.pending) >= 4 + length:
                         payload = self.pending[4:4 + length]
                         self.pending = self.pending[4 + length:]
-                        # Try to decrypt if encryption is enabled
                         if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
                             payload = self._decrypt_message(payload)
-                        return json.loads(payload.decode())
+                        try:
+                            return json.loads(payload.decode())
+                        except json.JSONDecodeError:
+                            return None
 
                 chunk = self.conn.recv(4096)
                 if not chunk:
-                    # Client disconnected
                     return None
                 self.pending += chunk
-        except socket.timeout:
+        except (socket.timeout, ConnectionResetError, BrokenPipeError, OSError):
             return None
-        except (ConnectionResetError, BrokenPipeError, OSError) as e:
-            # Connection error - client disconnected unexpectedly
-            print(f"  [INFO] Connection lost: {e}", flush=True)
-            return None
-        except Exception as e:
-            print(f"  [ERROR] recv error: {e}", flush=True)
+        except Exception:
             return None
 
     def handle_register(self, data):
@@ -1529,26 +1552,21 @@ class ClientHandler:
 
     def handle_login(self, data):
         """Handle user login with E2E encryption."""
-        # Check if data is encrypted
         if 'encrypted' in data and data['encrypted']:
             try:
-                # Decrypt the credentials
                 credentials = decrypt_credentials(data, ChessServer._server_private)
                 username = credentials.get('username', '').strip()
                 password = credentials.get('password', '')
-            except Exception as e:
-                print(f"  [DEBUG] Decryption failed: {e}", flush=True)
+            except Exception:
                 self.send(RESP_ERROR, "Decryption failed", False)
                 return
         else:
-            # Fallback to plaintext (for debugging)
             username = data.get('username', '').strip()
             password = data.get('password', '')
 
         success, message = self.db.authenticate_user(username, password)
         if success:
             self.logged_in_user = username
-            # Track connected client
             server = getattr(self, 'server', None)
             if server:
                 server.connected_clients[username] = self
@@ -1556,13 +1574,21 @@ class ClientHandler:
 
     def handle_auto_login(self, data):
         """Handle auto-login using stored password hash."""
-        username = data.get('username', '').strip()
-        password_hash = data.get('password_hash', '')
+        if 'encrypted' in data and data['encrypted']:
+            try:
+                credentials = decrypt_credentials(data, ChessServer._server_private)
+                username = credentials.get('username', '').strip()
+                password_hash = credentials.get('password_hash', '')
+            except Exception:
+                self.send(RESP_ERROR, "Decryption failed", False)
+                return
+        else:
+            username = data.get('username', '').strip()
+            password_hash = data.get('password_hash', '')
 
         success, message = self.db.authenticate_user_with_hash(username, password_hash)
         if success:
             self.logged_in_user = username
-            # Track connected client
             server = getattr(self, 'server', None)
             if server:
                 server.connected_clients[username] = self
@@ -1598,32 +1624,19 @@ class ClientHandler:
         duration = data.get('duration', 0)
         rated = data.get('rated', True)
 
-        # Debug: Log the save request
-        print(f"  [DEBUG] Saving game: {white} vs {black}, result={result}, rated={rated}")
-        print(f"  [DEBUG] Logged in user: {self.logged_in_user}")
-
-        # Verify that the logged-in user is one of the players
-        if self.logged_in_user not in (white, black):
-            print(f"  [DEBUG] Warning: Logged in user {self.logged_in_user} is not {white} or {black}")
-
         success, elo_changes = self.db.save_game(white, black, result, moves, duration, rated)
-        
+
         if success and elo_changes:
-            print(f"  [DEBUG] Game saved with ELO changes: {elo_changes}")
             self.send(RESP_SUCCESS, elo_changes, True)
         else:
-            print(f"  [DEBUG] Game saved successfully={success}")
             self.send(RESP_SUCCESS if success else RESP_ERROR,
                       "Game saved" if success else "Failed to save game", success)
     
     def handle_list_users(self, data):
         """Handle user list request."""
-        print(f"  [DEBUG] handle_list_users called with data: {data}", flush=True)
         try:
             users = self.db.list_users()
-            print(f"  [DEBUG] Retrieved {len(users)} users: {users}", flush=True)
             self.send(RESP_USERS, users, True)
-            print(f"  [DEBUG] Sent users list to client", flush=True)
         except Exception as e:
             print(f"  [ERROR] handle_list_users failed: {e}", flush=True)
             self.send(RESP_ERROR, str(e), False)
@@ -1862,35 +1875,25 @@ class ClientHandler:
             self.send(RESP_ERROR, "Not logged in", False)
             return
 
-        # Get client's public key
         client_public = data.get('client_public')
         if not client_public:
             self.send(RESP_ERROR, "Client public key required", False)
             return
 
         try:
-            # Compute shared secret using server's private key and client's public key
             shared_secret = _dh_compute_shared_secret(ChessServer._server_private, client_public)
-
-            # Store the session key
             self.session_key = shared_secret
             self.encryption_enabled = True
-            self._nonce_counter = 0  # Reset nonce counter
+            self._nonce_counter = 0
 
-            print(f"  [INFO] E2E encryption session established with {self.logged_in_user}", flush=True)
-
-            # Send confirmation WITH server's public key (unencrypted so client can compute shared secret)
-            # Temporarily disable encryption for this message
             old_encryption_state = self.encryption_enabled
             self.encryption_enabled = False
             self.send(RESP_SUCCESS, {
                 'message': 'Session key exchange successful. All future communications are encrypted.',
                 'server_public': ChessServer._server_public
             }, True)
-            # Re-enable encryption
             self.encryption_enabled = old_encryption_state
-        except Exception as e:
-            print(f"  [ERROR] Session key exchange failed: {e}", flush=True)
+        except Exception:
             self.send(RESP_ERROR, "Session key exchange failed", False)
 
     def handle_key_exchange(self, data):
@@ -1906,43 +1909,116 @@ class ClientHandler:
         }, True)
 
     def handle_send_message(self, data):
-        """Handle sending an encrypted message."""
-        if not self.logged_in_user:
-            self.send(RESP_ERROR, "Not logged in", False)
-            return
-
-        recipient = data.get('recipient', '').strip()
-        encrypted_content = data.get('encrypted_content')
-        iv = data.get('iv')
-        tag = data.get('tag')
-
-        if not recipient or not encrypted_content:
-            self.send(RESP_ERROR, "Recipient and content required", False)
-            return
-
-        # Verify users are friends
-        if not self.db.are_friends(self.logged_in_user, recipient):
-            self.send(RESP_ERROR, "Can only message friends", False)
-            return
-
-        # Store the message
-        success, result = self.db.store_message(
-            self.logged_in_user, recipient, encrypted_content, iv, tag
-        )
+        """
+        Handle sending an encrypted message to another user.
         
-        if not success:
-            self.send(RESP_ERROR, result, False)
-            return
+        Architecture: Store-and-forward with E2E encryption
+        - Message is encrypted by sender with recipient's public key
+        - Server stores the encrypted blob (cannot read contents)
+        - Recipient pulls messages when they come online
+        - No error if recipient is offline - message waits on server
+        """
+        try:
+            if not self.logged_in_user:
+                self.send(MSG_MESSAGE_SENT_ACK, {
+                    'success': False,
+                    'error': 'Not logged in',
+                    'stored': False
+                })
+                return
 
-        # Try to notify the recipient if they're online
-        server = getattr(self, 'server', None)
-        if server and recipient in server.connected_clients:
-            server.connected_clients[recipient].send(MSG_NEW_MESSAGE_NOTIFY, {
-                'sender': self.logged_in_user,
-                'message_id': result
+            recipient = data.get('recipient', '').strip()
+            encrypted_content = data.get('encrypted_content')
+            iv = data.get('iv')
+            tag = data.get('tag')
+
+            # Validate inputs
+            if not recipient:
+                self.send(MSG_MESSAGE_SENT_ACK, {
+                    'success': False,
+                    'error': 'Recipient required',
+                    'stored': False
+                })
+                return
+            
+            if not encrypted_content:
+                self.send(MSG_MESSAGE_SENT_ACK, {
+                    'success': False,
+                    'error': 'Message content required',
+                    'stored': False
+                })
+                return
+
+            # Verify recipient exists
+            if recipient not in self.db._load_db().get('users', {}):
+                self.send(MSG_MESSAGE_SENT_ACK, {
+                    'success': False,
+                    'error': 'Recipient not found',
+                    'stored': False
+                })
+                return
+
+            # Verify users are friends
+            if not self.db.are_friends(self.logged_in_user, recipient):
+                self.send(MSG_MESSAGE_SENT_ACK, {
+                    'success': False,
+                    'error': 'Users are not friends',
+                    'stored': False
+                })
+                return
+
+            # Store the message (E2E encrypted - server cannot read it)
+            success, result = self.db.store_message(
+                self.logged_in_user, recipient, encrypted_content, iv, tag
+            )
+
+            if not success:
+                self.send(MSG_MESSAGE_SENT_ACK, {
+                    'success': False,
+                    'error': result,
+                    'stored': False
+                })
+                return
+
+            # SUCCESS: Message stored on server
+            # Recipient will get it when they pull messages (online or later)
+            self.send(MSG_MESSAGE_SENT_ACK, {
+                'success': True,
+                'message_id': result,
+                'stored': True,
+                'recipient_online': recipient in getattr(self.server, 'connected_clients', {})
             })
+            
+            # Optionally notify online recipient (fire-and-forget, non-blocking)
+            # This is just a hint - recipient will pull messages anyway
+            server = getattr(self, 'server', None)
+            if server and recipient in server.connected_clients:
+                try:
+                    # Send notification in background thread (don't block)
+                    def notify_recipient():
+                        try:
+                            recipient_client = server.connected_clients.get(recipient)
+                            if recipient_client:
+                                recipient_client.send(MSG_NEW_MESSAGE_NOTIFY, {
+                                    'sender': self.logged_in_user,
+                                    'hint': 'New message available'
+                                })
+                        except:
+                            pass  # Ignore notification failures
+                    
+                    threading.Thread(target=notify_recipient, daemon=True).start()
+                except:
+                    pass  # Ignore notification setup failures
 
-        self.send(RESP_SUCCESS, {'message_id': result}, True)
+        except Exception as e:
+            # Log error but don't expose details to client
+            import traceback
+            traceback.print_exc()
+            self.send(MSG_MESSAGE_SENT_ACK, {
+                'success': False,
+                'error': 'Server error',
+                'stored': False
+            })
 
     def handle_get_messages(self, data):
         """Handle getting messages with a friend."""
@@ -1955,6 +2031,11 @@ class ClientHandler:
 
         if not friend:
             self.send(RESP_ERROR, "Friend username required", False)
+            return
+        
+        # Verify users are friends
+        if not self.db.are_friends(self.logged_in_user, friend):
+            self.send(RESP_ERROR, "Users are not friends", False)
             return
 
         messages = self.db.get_messages(self.logged_in_user, friend, since_id)
@@ -2068,9 +2149,6 @@ class ClientHandler:
 
     def handle_request(self):
         """Main request handling loop."""
-        print(f"  [INFO] Client connected: {self.addr[0]}:{self.addr[1]}", flush=True)
-
-        # Main request handling loop
         while True:
             msg = self.recv(timeout=30.0)
             if not msg:
@@ -2160,17 +2238,15 @@ class ClientHandler:
     def close(self):
         """Close the connection."""
         try:
-            # Leave queue if in one
             if self.matchmaking and self.logged_in_user:
                 self.matchmaking.leave_queue(self.logged_in_user)
-            # Properly shutdown the connection
             try:
                 self.conn.shutdown(socket.SHUT_RDWR)
             except:
                 pass
             self.conn.close()
-        except Exception as e:
-            print(f"  [DEBUG] close error: {e}", flush=True)
+        except Exception:
+            pass
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -2260,13 +2336,9 @@ class ChessServer:
     def _handle_client(self, handler):
         """Handle a client connection."""
         try:
-            # Set server reference for notifications
             handler.server = self
             handler.handle_request()
-        except Exception as e:
-            print(f"  [ERROR] Client handler error: {e}", flush=True)
         finally:
-            # Remove from connected clients
             if handler.logged_in_user and handler.logged_in_user in self.connected_clients:
                 del self.connected_clients[handler.logged_in_user]
             handler.close()
@@ -2282,25 +2354,25 @@ class ChessServer:
                     self.running = False
                 elif cmd == 'users':
                     users = self.db_manager.list_users()
-                    print(f"  [INFO] Registered users ({len(users)}): {', '.join(users) if users else 'None'}")
+                    print(f"  Registered users ({len(users)}): {', '.join(users) if users else 'None'}")
                 elif cmd == 'queue':
                     with self.matchmaking.lock:
                         queue_count = len(self.matchmaking.queue)
                         games_count = len(self.matchmaking.active_games)
-                    print(f"  [INFO] Matchmaking Queue: {queue_count} players waiting, {games_count} active games")
+                    print(f"  Matchmaking Queue: {queue_count} players waiting, {games_count} active games")
             except:
                 pass
 
     def _cleanup_loop(self):
         """Background loop to cleanup expired messages."""
         while self.cleanup_running:
-            time.sleep(3600)  # Check every hour
+            time.sleep(3600)
             try:
                 deleted = self.db_manager.cleanup_expired_messages()
                 if deleted > 0:
-                    print(f"  [INFO] Cleaned up {deleted} expired messages", flush=True)
-            except Exception as e:
-                print(f"  [ERROR] Message cleanup failed: {e}", flush=True)
+                    print(f"  Cleaned up {deleted} expired messages", flush=True)
+            except Exception:
+                pass
 
     def stop(self):
         """Stop the server."""
@@ -2311,7 +2383,7 @@ class ChessServer:
             client.close()
         if self.server_socket:
             self.server_socket.close()
-        print("  [INFO] Server stopped.")
+        print("  Server stopped.")
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -2577,7 +2649,7 @@ def main():
     try:
         server.start()
     except KeyboardInterrupt:
-        print("\n  [INFO] Server interrupted by user.")
+        print("\n  Server interrupted by user.")
         server.stop()
 
 
