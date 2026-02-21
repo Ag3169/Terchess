@@ -507,10 +507,11 @@ RESP_LEADERBOARD = 'LEADERBOARD'
 # ════════════════════════════════════════════════════════════════════════
 class DatabaseManager:
     """Handles all database operations for user accounts and game history."""
-    
+
     def __init__(self, db_file=DATABASE_FILE):
         self.db_file = db_file
         self.lock = threading.Lock()
+        self._message_id_counter = 0  # Thread-safe counter for message IDs
         self._init_db()
     
     def _init_db(self):
@@ -524,6 +525,12 @@ class DatabaseManager:
                 "messages": [],
                 "challenges": []
             })
+        else:
+            # Initialize message ID counter from existing messages
+            db = self._load_db()
+            messages = db.get('messages', [])
+            if messages:
+                self._message_id_counter = max(msg.get('id', 0) for msg in messages)
     
     def _load_db(self):
         """Load database from file."""
@@ -958,8 +965,12 @@ class DatabaseManager:
                 return False, "Users are not friends"
 
             from datetime import timedelta
+            # Use thread-safe counter for message ID
+            self._message_id_counter += 1
+            message_id = self._message_id_counter
+            
             message = {
-                'id': len(db['messages']) + 1,
+                'id': message_id,
                 'sender': sender,
                 'recipient': recipient,
                 'encrypted_content': encrypted_content,
@@ -970,7 +981,7 @@ class DatabaseManager:
             }
             db['messages'].append(message)
             self._save_db(db)
-            return True, message['id']
+            return True, message_id
 
     def get_messages(self, user1, user2, since_id=0):
         """Get messages between two users."""
@@ -1450,10 +1461,19 @@ class ClientHandler:
         self._nonce_counter = 0  # For CTR mode nonce
 
     def _derive_nonce(self):
-        """Derive a unique nonce for each message (12 bytes for GCM)."""
+        """Derive a unique nonce for each message (12 bytes for GCM).
+        
+        Uses a different nonce space than the client to avoid nonce reuse:
+        - Client uses nonces with bit 0 = 0 (even counter values)
+        - Server uses nonces with bit 0 = 1 (odd counter values)
+        """
         self._nonce_counter += 1
         # Pack counter as 8-byte big-endian, then pad to 12 bytes
-        return b'\x00\x00\x00\x00' + struct.pack('>Q', self._nonce_counter)
+        # Set the LSB of the last byte to 1 to distinguish server->client messages
+        nonce_bytes = b'\x00\x00\x00\x00' + struct.pack('>Q', self._nonce_counter)
+        # Set the last bit to distinguish from client nonces
+        nonce_bytes = nonce_bytes[:-1] + bytes([nonce_bytes[-1] | 0x01])
+        return nonce_bytes
 
     def _encrypt_message(self, plaintext: bytes) -> bytes:
         """Encrypt a message using session key."""
@@ -1513,7 +1533,10 @@ class ClientHandler:
                         payload = self.pending[4:4 + length]
                         self.pending = self.pending[4 + length:]
                         if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
-                            payload = self._decrypt_message(payload)
+                            try:
+                                payload = self._decrypt_message(payload)
+                            except Exception:
+                                return None
                         try:
                             return json.loads(payload.decode())
                         except json.JSONDecodeError:
@@ -1635,6 +1658,10 @@ class ClientHandler:
     def handle_list_users(self, data):
         """Handle user list request."""
         try:
+            # Check if user is logged in
+            if not self.logged_in_user:
+                self.send(RESP_ERROR, "Not logged in", False)
+                return
             users = self.db.list_users()
             self.send(RESP_USERS, users, True)
         except Exception as e:
@@ -1911,7 +1938,7 @@ class ClientHandler:
     def handle_send_message(self, data):
         """
         Handle sending an encrypted message to another user.
-        
+
         Architecture: Store-and-forward with E2E encryption
         - Message is encrypted by sender with recipient's public key
         - Server stores the encrypted blob (cannot read contents)
@@ -1998,16 +2025,19 @@ class ClientHandler:
                     def notify_recipient():
                         try:
                             recipient_client = server.connected_clients.get(recipient)
-                            if recipient_client:
+                            if recipient_client and recipient_client.conn:
+                                # Check if socket is still connected before sending
                                 recipient_client.send(MSG_NEW_MESSAGE_NOTIFY, {
                                     'sender': self.logged_in_user,
                                     'hint': 'New message available'
                                 })
-                        except:
-                            pass  # Ignore notification failures
-                    
+                        except (ConnectionResetError, BrokenPipeError, OSError):
+                            pass  # Recipient disconnected - they'll get messages when they pull
+                        except Exception:
+                            pass  # Ignore other notification failures
+
                     threading.Thread(target=notify_recipient, daemon=True).start()
-                except:
+                except Exception:
                     pass  # Ignore notification setup failures
 
         except Exception as e:
@@ -2023,23 +2053,23 @@ class ClientHandler:
     def handle_get_messages(self, data):
         """Handle getting messages with a friend."""
         if not self.logged_in_user:
-            self.send(RESP_ERROR, "Not logged in", False)
+            self.send(RESP_SUCCESS, {'success': False, 'error': 'Not logged in'})
             return
 
         friend = data.get('friend', '').strip()
         since_id = data.get('since_id', 0)
 
         if not friend:
-            self.send(RESP_ERROR, "Friend username required", False)
+            self.send(RESP_SUCCESS, {'success': False, 'error': 'Friend username required'})
             return
-        
+
         # Verify users are friends
         if not self.db.are_friends(self.logged_in_user, friend):
-            self.send(RESP_ERROR, "Users are not friends", False)
+            self.send(RESP_SUCCESS, {'success': False, 'error': 'Users are not friends'})
             return
 
         messages = self.db.get_messages(self.logged_in_user, friend, since_id)
-        self.send(RESP_SUCCESS, {'messages': messages}, True)
+        self.send(RESP_SUCCESS, {'success': True, 'messages': messages})
 
     # ════════════════════════════════════════════════════════════════════
     #  CHALLENGE SYSTEM HANDLERS
