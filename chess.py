@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════════╗
-║            ASCII CHESS — Ultimate Edition                                ║
+║            ASCII CHESS — Ultimate Edition v3.0                           ║
 ║                                                                          ║
 ║  Features:                                                               ║
 ║   • All chess rules (castling, en passant, promotion, 50-move,           ║
 ║     threefold repetition, insufficient material)                         ║
-║   • Standard Algebraic Notation (SAN) input with disambiguation          ║
-║   • Promote to Q, R, B, N                                                ║
-║   • Multiplayer over LAN/Internet (client/server TCP)                    ║
-║   • ELO rating system with persistent player database                    ║
-║   • Post-game analysis with centipawn loss & move annotations            ║
-║   • Built-in neural network positional evaluator (NNUE-style, pure py)   ║
-║   • Built-in endgame tablebases (KQK, KRK, KBNK, KPK — perfect play)     ║
-║   • Built-in opening book (500+ master-level openings, no file needed)   ║
-║   • Strong AI: negamax + α-β, IID, TT, null-move, LMR, aspiration,       ║
-║                killer/history heuristics, MVV-LVA, quiescence, futility  ║
+║   • Standard Algebraic Notation + coordinate input (e2e4, e2-e4)        ║
+║   • Chess Clock: Bullet/Blitz/Rapid/Classical time controls              ║
+║   • Endgame Trainer: 7 classic endgame positions with coaching           ║
+║   • Opening Explorer: deviation from book, alternatives shown            ║
+║   • Opening Quiz: 12 flash-card positions to test your knowledge         ║
+║   • PGN Import/Export: load, replay, analyze, save to file               ║
+║   • Game Replay Viewer: ← → navigate any saved game                     ║
+║   • Opening Book: 3000+ master-level positions (all major systems)       ║
+║   • Strong AI: negamax + α-β, IID, TT, null-move, LMR, aspiration       ║
+║   • Neural Network positional evaluator (NNUE-style, pure Python)        ║
+║   • Built-in endgame tablebases (KQK, KRK, KBNK, KPK — perfect play)    ║
+║   • ELO rating system • Online multiplayer • E2E encryption              ║
+║   • 8 board themes including 2 colour-blind-safe themes                  ║
+║   • Stockfish bridge (auto-detects if installed)                         ║
 ║   • Zero external dependencies (pure Python stdlib only)                 ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
@@ -38,6 +42,7 @@ import secrets
 import base64
 import queue
 from hmac import compare_digest
+from datetime import datetime
 
 # ════════════════════════════════════════════════════════════════════════
 #  E2E ENCRYPTION UTILITIES (Pure Python stdlib - AES-GCM + ECDH-like)
@@ -416,6 +421,158 @@ PIECE_ASCII  = {
     (BLACK,PAWN):'p',(BLACK,KNIGHT):'n',(BLACK,BISHOP):'b',
     (BLACK,ROOK):'r',(BLACK,QUEEN):'q',(BLACK,KING):'k',
 }
+PIECE_UNICODE = {
+    (WHITE,PAWN):'♙',(WHITE,KNIGHT):'♘',(WHITE,BISHOP):'♗',
+    (WHITE,ROOK):'♖',(WHITE,QUEEN):'♕',(WHITE,KING):'♔',
+    (BLACK,PAWN):'♟',(BLACK,KNIGHT):'♞',(BLACK,BISHOP):'♝',
+    (BLACK,ROOK):'♜',(BLACK,QUEEN):'♛',(BLACK,KING):'♚',
+}
+
+# ANSI colour helpers
+_ANSI_RESET      = '\033[0m'
+_BG_LIGHT        = '\033[48;5;223m'   # warm cream
+_BG_DARK         = '\033[48;5;136m'   # rich brown
+_BG_HL_LIGHT     = '\033[48;5;185m'   # yellow highlight (light sq)
+_BG_HL_DARK      = '\033[48;5;178m'   # yellow highlight (dark sq)
+_FG_WHITE_PIECE  = '\033[1;97m'       # bold bright white
+_FG_BLACK_PIECE  = '\033[0;30m'       # black
+
+def _ansi_supported():
+    """Return True if the terminal likely supports ANSI escapes."""
+    return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+
+# ════════════════════════════════════════════════════════════════════════
+#  GLOBAL SETTINGS
+# ════════════════════════════════════════════════════════════════════════
+SETTINGS_FILE = os.path.expanduser("~/.chess_settings.json")
+
+# Board colour themes: name -> (light_sq, dark_sq, hl_light, hl_dark)
+BOARD_THEMES = {
+    # Format: (light_sq, dark_sq, hl_light, hl_dark)
+    # Highlights use cyan/teal — visually distinct from both board squares
+    # and white (bright) / gold (black) piece colours.
+    'classic':    ('\033[48;5;223m', '\033[48;5;136m', '\033[48;5;37m',  '\033[48;5;30m'),
+    'green':      ('\033[48;5;193m', '\033[48;5;64m',  '\033[48;5;37m',  '\033[48;5;30m'),
+    'blue':       ('\033[48;5;153m', '\033[48;5;25m',  '\033[48;5;43m',  '\033[48;5;30m'),
+    'grey':       ('\033[48;5;252m', '\033[48;5;240m', '\033[48;5;37m',  '\033[48;5;30m'),
+    'red':        ('\033[48;5;224m', '\033[48;5;124m', '\033[48;5;37m',  '\033[48;5;30m'),
+    'purple':     ('\033[48;5;225m', '\033[48;5;93m',  '\033[48;5;37m',  '\033[48;5;30m'),
+    'cb_blue':    ('\033[48;5;117m', '\033[48;5;20m',  '\033[48;5;43m',  '\033[48;5;30m'),  # colour-blind safe
+    'cb_orange':  ('\033[48;5;229m', '\033[48;5;130m', '\033[48;5;37m',  '\033[48;5;30m'),  # colour-blind safe
+}
+
+# Default settings
+_settings = {
+    'piece_style':      'letters',  # always letters for board alignment (setting kept for compat)
+    'board_theme':      'classic',  # key in BOARD_THEMES
+    'show_coords':      True,
+    'colorblind_mode':  False,      # high-contrast blue/white + yellow pieces
+    'show_eval_bar':    False,      # show evaluation bar during play
+    'use_symbols':      True,       # use Unicode chess symbols ♙♟ etc.
+    'ai_depth':         4,          # AI search depth (1-8)
+    'clock_preset':     'Rapid',    # default time control
+}
+
+def _load_settings():
+    global _settings
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                saved = json.load(f)
+            _settings.update(saved)
+    except Exception:
+        pass
+
+def _save_settings():
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(_settings, f, indent=2)
+    except Exception:
+        pass
+
+def _get_board_colors():
+    """Return (bg_light, bg_dark, bg_hl_light, bg_hl_dark) for current theme."""
+    theme = _settings.get('board_theme', 'classic')
+    return BOARD_THEMES.get(theme, BOARD_THEMES['classic'])
+
+def settings_menu():
+    """Interactive settings menu for board appearance and accessibility."""
+    _load_settings()
+    while True:
+        coords     = _settings.get('show_coords', True)
+        evalbar    = _settings.get('show_eval_bar', False)
+        ai_depth   = _settings.get('ai_depth', 4)
+        clock_pre  = _settings.get('clock_preset', 'Rapid')
+
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║                      SETTINGS                            ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print(f"  ║  1. Show Coordinates : {'Yes' if coords else 'No':<34}║")
+        print(f"  ║  2. Eval Bar in Game : {'On' if evalbar else 'Off':<34}║")
+        print(f"  ║  3. AI Depth         : {ai_depth} (1=fast/easy  8=slow/hard)    ║")
+        print(f"  ║  4. Default Clock    : {clock_pre:<34}║")
+        print(f"  ║  5. Server Config    : configure online server           ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  Pieces always display as Unicode symbols: ♔♕♖♗♘♙♚♛♜♝♞♟ ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  0. Back to Main Menu                                    ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+        try:
+            choice = input("  Choice: ").strip()
+        except EOFError:
+            return
+
+        if choice == '0':
+            return
+
+        elif choice == '1':
+            _settings['show_coords'] = not _settings.get('show_coords', True)
+            state = 'enabled' if _settings['show_coords'] else 'disabled'
+            print(f"  ✓ Coordinates {state}.")
+            _save_settings()
+
+        elif choice == '2':
+            _settings['show_eval_bar'] = not _settings.get('show_eval_bar', False)
+            state = 'On' if _settings['show_eval_bar'] else 'Off'
+            print(f"  ✓ Evaluation bar: {state}")
+            _save_settings()
+
+        elif choice == '3':
+            try:
+                d = int(input("  AI depth [1-8]: ").strip())
+                if 1 <= d <= 8:
+                    _settings['ai_depth'] = d
+                    print(f"  ✓ AI depth set to {d}.")
+                else:
+                    print("  Please enter a number between 1 and 8.")
+            except (ValueError, EOFError):
+                print("  Invalid input.")
+            _save_settings()
+
+        elif choice == '4':
+            presets = ['Bullet', 'Blitz', 'Rapid', 'Classical']
+            for idx, p in enumerate(presets, 1):
+                marker = " ◄" if p == clock_pre else ""
+                print(f"  {idx}. {p}{marker}")
+            try:
+                sub = input(f"  Choose preset [1-{len(presets)}]: ").strip()
+                pidx = int(sub) - 1
+                if 0 <= pidx < len(presets):
+                    _settings['clock_preset'] = presets[pidx]
+                    print(f"  ✓ Default clock set to {presets[pidx]}.")
+                else:
+                    print("  Invalid choice.")
+            except (ValueError, EOFError):
+                print("  Invalid input.")
+            _save_settings()
+
+        elif choice == '5':
+            configure_server_connection()
+
+        else:
+            print("  Invalid choice.")
+
+_load_settings()
 INF        = 100_000_000
 MATE_SCORE = 10_000_000
 
@@ -736,6 +893,41 @@ class Board:
         return False
 
     # ── SAN parsing ───────────────────────────────────────────
+    def _normalise_input(self, raw):
+        """
+        Accept multiple move input formats and normalise to something
+        parse_san can handle:
+          • Standard SAN:  e4  Nf3  Bxc4  O-O  e8=Q
+          • Coordinate:    e2e4  e2-e4  E2E4  (long algebraic)
+          • Short coord:   Same but no dash
+        Returns the normalised string, or raw unchanged if unrecognised.
+        """
+        s = raw.strip()
+        # strip trailing annotations
+        s2 = s.rstrip('+#!?')
+        # Long algebraic e.g. "e2e4" or "e2-e4"
+        pat = re.match(r'^([a-hA-H][1-8])[-x]?([a-hA-H][1-8])([qQrRbBnN]?)$', s2)
+        if pat:
+            from_sq_s = pat.group(1).lower()
+            to_sq_s   = pat.group(2).lower()
+            promo     = pat.group(3).upper()
+            from_sq   = s2sq(from_sq_s)
+            to_sq     = s2sq(to_sq_s)
+            # Find the matching legal move
+            for m in self.legal():
+                if m.from_sq == from_sq and m.to_sq == to_sq:
+                    if promo:
+                        pmap = {'Q': QUEEN, 'R': ROOK, 'B': BISHOP, 'N': KNIGHT}
+                        if m.promotion == pmap.get(promo):
+                            return self.san(m)
+                    elif m.promotion is None or m.promotion == QUEEN:
+                        return self.san(m)
+            # If we found the from/to squares at all, return a SAN
+            for m in self.legal():
+                if m.from_sq == from_sq and m.to_sq == to_sq:
+                    return self.san(m)
+        return s
+
     def parse_san(self, san):
         san=san.strip().rstrip('+#!?')
         if san in ('O-O','0-0'):
@@ -906,6 +1098,22 @@ class OpeningBook:
             "e4 e5 Nf3 Nc6 Bb5 a6 Bxc6 dxc6 O-O f6 d4 exd4 Nxd4 c5 Ne2 Qxd1 Rxd1",
             # Steinitz Defence
             "e4 e5 Nf3 Nc6 Bb5 d6 c3 Bd7 d4 Nge7 O-O Ng6 Re1",
+            # Chigorin Variation (…Na5)
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Na5 Bc2 c5 d4 Qc7",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Na5 Bc2 c5 d4 cxd4 Nxd4 Nxb3 axb3",
+            # Archangel Variation (…Bb7)
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O b5 Bb3 Bb7 d3 Be7",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O b5 Bb3 Bb7 d3 Bc5 c3 d6 Nbd2 O-O",
+            # Neo-Archangel / Breyer
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Nb8 d3 d6 c3 Nbd7",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Nb8 d4 Nbd7 Nbd2 Bb7 Bc2 c5",
+            # Rio Gambit (Fried Liver in the Spanish)
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Nxe4 Re1 Nc5 Nxe5 Nxe5 Rxe5+ Be7 Bf1 Nf6 d4 Ne6 d5",
+            # Zaitsev Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Bb7 d4 Re8",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Bb7 d4 Re8 Ng5 Rf8 Nf3 Re8",
+            # Keres Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O d4 Bg4 d5 Na5 Bc2 c6",
 
             # ── ITALIAN / GIUOCO PIANO ─────────────────────────────────────
             "e4 e5 Nf3 Nc6 Bc4",
@@ -1278,16 +1486,491 @@ class OpeningBook:
             "c4 c5 Nf3 Nf6 Nc3 e6 g3 b6 Bg2 Bb7 O-O Be7 d4 cxd4 Qxd4 d6 Rd1 a6 Qh4",
             "c4 c5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2 Nc7 Nf3 Nc6 O-O e5 a3 Be7",
 
-            # ── RÉTI OPENING ──────────────────────────────────────────────
-            "Nf3 d5 c4 d4 b4 f6 g3 e5 Bg2 Be6 O-O c5 e3 Nf6",
-            "Nf3 Nf6 c4 g6 g3 Bg7 Bg2 O-O O-O d6 d4 Nc6 Nc3 a6 d5 Na5 Nd2",
+            # ── RÉTI OPENING — COMPREHENSIVE ──────────────────────────────
+            # Main move order
+            "Nf3 d5",
+            "Nf3 d5 c4",
+            # Réti Gambit (c4 dxc4)
+            "Nf3 d5 c4 dxc4 e3 Nf6 Bxc4 e6 O-O c5 d4",
+            "Nf3 d5 c4 dxc4 Na3 c5 Nxc4 Nc6 g3 e5 Nxe5 Nxe5 Bg2",
+            # King's Indian Réti
+            "Nf3 Nf6 c4 g6 g3 Bg7 Bg2 O-O O-O d6 d4 Nc6 Nc3 a6 d5 Na5 Nd2 c5 dxc6 Nxc6",
+            "Nf3 Nf6 c4 g6 g3 Bg7 Bg2 O-O O-O d6 d4 Nbd7 Nc3 e5 e4 exd4 Nxd4 Re8",
+            # Réti vs d5 slow build
             "Nf3 d5 g3 Nf6 Bg2 e6 O-O Be7 d3 O-O Nbd2 c5 c3 Nc6 Re1 b5",
+            "Nf3 d5 g3 g6 Bg2 Bg7 O-O Nf6 d3 O-O Nbd2 c5 c3 Nc6 Re1",
+            # Réti Gambit declined
+            "Nf3 d5 c4 d4 b4 f6 g3 e5 Bg2 Be6 O-O c5 e3 Nf6",
+            # Réti vs c5 (English/Réti hybrid)
+            "Nf3 c5 c4 Nf6 Nc3 e6 g3 b6 Bg2 Bb7 O-O Be7 d4 cxd4 Qxd4 d6",
+            "Nf3 c5 c4 g6 d4 cxd4 Nxd4 Nc6 g3 Bg7 Bg2 Nf6 Nc3 O-O O-O d6",
+            # Réti vs Nf6 (Catalan-Réti)
+            "Nf3 Nf6 c4 e6 g3 d5 Bg2 Be7 O-O O-O d4 dxc4 Qc2 a6 Qxc4 b5 Qd3 Bb7",
+            "Nf3 Nf6 c4 e6 g3 d5 Bg2 Be7 O-O O-O b3 c5 Bb2 Nc6 e3 b6 Nc3",
+            # Réti vs e5
+            "Nf3 e5 Nxe5 Nc6 Nxc6 dxc6 g3 Nf6 Bg2 Bc5 d3 O-O Nc3 Re8",
+            # Réti Opening 1.Nf3 Nf6 2.b3
+            "Nf3 Nf6 b3 g6 Bb2 Bg7 c4 O-O g3 d6 Bg2 e5 O-O Nc6 d3",
+            # Réti–Zukertort Attack
+            "Nf3 d5 b3 Nf6 Bb2 Bf5 g3 e6 Bg2 Be7 O-O O-O d3 c5 Nbd2",
+            "Nf3 d5 b3 Bg4 Bb2 Nd7 g3 e6 Bg2 Ngf6 O-O Be7 d3 O-O Nbd2 c5 c4",
+
+            # ── PONZIANI OPENING — COMPREHENSIVE ──────────────────────────
+            # Main line: 1.e4 e5 2.Nf3 Nc6 3.c3
+            "e4 e5 Nf3 Nc6 c3",
+            # Main response: 3...d5
+            "e4 e5 Nf3 Nc6 c3 d5 Qa4 Nf6 Nxe5 Bd6 Nxc6 bxc6 d3 O-O Be2",
+            "e4 e5 Nf3 Nc6 c3 d5 exd5 Qxd5 d4 e4 d5 exf3 dxc6 Qxd1+ Kxd1 fxg2 Bxg2",
+            "e4 e5 Nf3 Nc6 c3 d5 d4 exd4 e5 d3 Bb5 Nge7 Bxc6+ Nxc6 Nxd3 Qd7",
+            # 3...Nf6 (counter-attack)
+            "e4 e5 Nf3 Nc6 c3 Nf6 d4 Nxe4 d5 Ne7 Nxe5 d6 Nxf7 Kxf7 dxe6+ Kxe6",
+            "e4 e5 Nf3 Nc6 c3 Nf6 d4 exd4 e5 Nd5 cxd4 d6 Bc4 Nb6 Bb3 dxe5 dxe5 Bg4",
+            "e4 e5 Nf3 Nc6 c3 Nf6 d4 exd4 e5 Nd5 Bc4 Be7 cxd4 O-O O-O d6 Nc3 Nxc3 bxc3",
+            # 3...f5 (Jaenisch/Caro variation)
+            "e4 e5 Nf3 Nc6 c3 f5 d4 fxe4 Nxe5 Nxe5 dxe5 d6 Qh5+ g6 Qd5 Be6 Qxb7 Rb8 Qa6",
+            # 3...d6 (solid setup)
+            "e4 e5 Nf3 Nc6 c3 d6 d4 Nf6 Bd3 Be7 O-O O-O Re1 Re8 Nbd2",
+            # 3...Bc5 (Italian-like)
+            "e4 e5 Nf3 Nc6 c3 Bc5 d4 exd4 cxd4 Bb4+ Nc3 Nf6 Be2 O-O O-O Bxc3 bxc3 d6",
+            # Ponziani Countergambit (after 3...d5 4.Qa4 f6)
+            "e4 e5 Nf3 Nc6 c3 d5 Qa4 f6 exd5 Nd4 Qa3 Nxf3+ gxf3 fxe5 Nxe5",
+            # Ponziani vs Nf6 with early castling
+            "e4 e5 Nf3 Nc6 c3 Nf6 d4 exd4 e5 Nd5 Bc4 Nxc3 bxc3 d5 exd6 Bxd6 O-O O-O",
 
             # ── ENGLISH OPENING ───────────────────────────────────────────
             "c4 e5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2 Nb6 Nf3 Nc6 O-O Be7 d3",
             "c4 e5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6 Nf3 f5 O-O Nf6 Rb1",
             "c4 Nf6 Nc3 e6 Nf3 d5 d4 Be7 Bg5 O-O e3 h6 Bh4 b6 cxd5 exd5",
             "c4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nf3 e5 O-O Nge7 d3 O-O Be3 d6",
+
+            # ════════════════════════════════════════════════════════════════
+            # ADDITIONAL WHITE OPENINGS
+            # ════════════════════════════════════════════════════════════════
+
+            # ── KING'S GAMBIT (e4 e5 f4) ──────────────────────────────────
+            "e4 e5 f4",
+            "e4 e5 f4 exf4 Nf3 g5 h4 g4 Ne5 Nf6 Bc4 d5 exd5 Bd6",
+            "e4 e5 f4 exf4 Nf3 g5 Bc4 g4 O-O gxf3 Qxf3 Nc6 d3 Ne5 Qg3",
+            "e4 e5 f4 exf4 Bc4 d5 Bxd5 Nf6 Nc3 Bb4 Nf3 O-O O-O c6 Bb3",
+            "e4 e5 f4 Bc5 Nf3 d6 c3 Bg4 Be2 Nc6 d4 exd4 cxd4 Bb6",
+            # King's Gambit Declined
+            "e4 e5 f4 Bc5 fxe5 d6 exd6 Bxd6 Nf3 Nf6 Nc3 Nc6 Bc4 O-O O-O",
+            "e4 e5 f4 d5 exd5 e4 d3 Nf6 dxe4 Nxe4 Nf3 Bc5 Qe2 Bf5 Nc3",
+
+            # ── DANISH GAMBIT ──────────────────────────────────────────────
+            "e4 e5 d4 exd4 c3 dxc3 Bc4 cxb2 Bxb2 d5 Bxd5 Nf6 Bxf7+ Kxf7 Qxd8",
+            "e4 e5 d4 exd4 c3 dxc3 Nxc3 Nc6 Bc4 Bc5 Nf3 d6 O-O",
+
+            # ── VIENNA GAME ───────────────────────────────────────────────
+            "e4 e5 Nc3",
+            "e4 e5 Nc3 Nf6 f4 d5 fxe5 Nxe4 Nf3 Be7 d4 O-O Bd3 f5 exf6 Nxf6",
+            "e4 e5 Nc3 Nc6 f4 exf4 Nf3 g5 Bc4 g4 O-O gxf3 Qxf3 Ne5 Qxf4 Nxc4 Qxc4 d6",
+            "e4 e5 Nc3 Bc5 Bc4 Nf6 d3 Nc6 f4 d6 Nf3 O-O O-O a6 a4",
+            "e4 e5 Nc3 Nf6 Bc4 Nxe4 Qh5 Nd6 Bb3 Nc6 Nb5 g6 Qf3 f5 Qd5 Qe7",
+            # Vienna Gambit
+            "e4 e5 Nc3 Nf6 f4 d5 fxe5 Nxe4 Qf3 Nc6 Bb5 Nd4 Qxe4+ Nxb5 Nxb5 dxe4 Nxc7+",
+
+            # ── BISHOP'S OPENING ──────────────────────────────────────────
+            "e4 e5 Bc4 Nf6 d3 c6 Nf3 Be7 O-O d5 Bb3 O-O Nc3 dxe4 dxe4",
+            "e4 e5 Bc4 Bc5 Qe2 Nc6 c3 Nf6 f4 d6 d3 O-O Nf3",
+
+            # ── LATVIAN GAMBIT (with White lines) ─────────────────────────
+            "e4 e5 Nf3 f5 Nxe5 Qf6 Nc4 fxe4 Nc3 Qf7 Ne3 c6 d4 exd3 Bxd3 d5 O-O",
+
+            # ── KING'S INDIAN ATTACK ──────────────────────────────────────
+            "Nf3 d5 g3 Nf6 Bg2 c5 O-O Nc6 d3 e5 Nbd2 Be7 e4 dxe4 dxe4 O-O",
+            "e4 d6 Nf3 Nf6 g3 g6 Bg2 Bg7 O-O O-O d3 c5 Nbd2 Nc6 Re1",
+            "e4 c5 Nf3 e6 g3 Nc6 Bg2 d5 exd5 exd5 d4 cxd4 Nxd4 Nf6 O-O Be7",
+
+            # ── CLOSED SICILIAN (2.Nc3) ───────────────────────────────────
+            "e4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6 f4 e5 Nf3 Nge7 O-O O-O",
+            "e4 c5 Nc3 e6 g3 d5 exd5 exd5 d4 Nc6 Bg2 cxd4 Nxd4 Nf6 O-O Be7",
+
+            # ── ALAPIN SICILIAN (2.c3) ─────────────────────────────────────
+            "e4 c5 c3 d5 exd5 Qxd5 d4 Nc6 Nf3 Bg4 Be2 cxd4 cxd4 e6 Nc3 Bb4",
+            "e4 c5 c3 Nf6 e5 Nd5 d4 cxd4 cxd4 d6 Nf3 Nc6 Bc4 Nb6 Bb3 dxe5 dxe5 Bf5",
+            "e4 c5 c3 e6 d4 d5 exd5 exd5 Nf3 Nc6 Bb5 Bd6 dxc5 Bxc5 O-O Ne7",
+
+            # ── GRAND PRIX ATTACK (Sicilian) ──────────────────────────────
+            "e4 c5 Nc3 Nc6 f4 g6 Nf3 Bg7 Bc4 e6 f5 exf5 exf5 d5 fxg6 hxg6 Bb3",
+
+            # ── ENGLISH ATTACK (Sicilian) ──────────────────────────────────
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 d6 Be3 Nf6 f3 Be7 Qd2 O-O O-O-O",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 Qc7 Be2 a6 O-O Nf6 f4 d6 Kh1",
+
+            # ── SMITH-MORRA GAMBIT ─────────────────────────────────────────
+            "e4 c5 d4 cxd4 c3 dxc3 Nxc3 Nc6 Nf3 d6 Bc4 e6 O-O Nf6 Qe2 Be7 Rd1",
+            "e4 c5 d4 cxd4 c3 dxc3 Nxc3 e6 Nf3 a6 Bc4 b5 Bb3 Bb7 O-O Nf6 Qe2",
+
+            # ── CATALAN OPENING ────────────────────────────────────────────
+            "d4 Nf6 c4 e6 g3 d5 Bg2 Be7 Nf3 O-O O-O dxc4 Qc2 a6 Qxc4 b5 Qd3 Bb7",
+            "d4 Nf6 c4 e6 g3 d5 Bg2 Bb4+ Bd2 Be7 Nf3 O-O O-O c6 Nc3 Nbd7 Qc2",
+            "d4 d5 c4 e6 g3 Nf6 Bg2 Be7 Nf3 O-O O-O dxc4 Qa4 c5 dxc5 Bxc5 Nbd2",
+            "d4 Nf6 c4 e6 Nf3 d5 g3 dxc4 Bg2 Bb4+ Bd2 a5 O-O Nc6 Bxb4 axb4 Nbd2",
+
+            # ── LONDON SYSTEM (expanded) ───────────────────────────────────
+            "d4 Nf6 Bf4 e6 e3 d5 Nf3 Bd6 Bg3 O-O Nbd2 c5 c3 Nc6 Bd3 Qe7",
+            "d4 d5 Bf4 Nf6 e3 e6 Nf3 c5 c3 Nc6 Nbd2 Bd6 Bg3 O-O Bb5 Bd7",
+            "d4 Nf6 Bf4 d5 e3 c5 c3 Nc6 Nd2 e6 Ngf3 Bd6 Bg3 O-O Bb5 Qe7 dxc5",
+            "d4 d5 Bf4 c5 e3 Nc6 Nf3 Nf6 Nbd2 e6 c3 Bd6 Bg3 O-O Bb5",
+
+            # ── STONEWALL ATTACK ──────────────────────────────────────────
+            "d4 d5 e3 Nf6 Bd3 e6 f4 c5 c3 Nc6 Nd2 Bd6 Ngf3 O-O O-O Qc7 Ne5",
+            "d4 d5 e3 Nf6 f4 e6 Nf3 c5 c3 Nc6 Bd3 Bd6 O-O O-O Ne5 Qc7 Nd2",
+
+            # ── BARRY ATTACK /150 ATTACK ─────────────────────────────────
+            "d4 Nf6 Nf3 g6 Nc3 d5 Bf4 Bg7 e3 O-O Be2 c6 Ne5 Nfd7 Nxd7 Nxd7 O-O",
+
+            # ── KING'S INDIAN ATTACK (vs French setup) ────────────────────
+            "e4 e6 d3 d5 Nd2 Nf6 g3 Be7 Bg2 O-O Ngf3 c5 O-O Nc6 Re1 b5",
+
+            # ════════════════════════════════════════════════════════════════
+            # ADDITIONAL BLACK OPENINGS
+            # ════════════════════════════════════════════════════════════════
+
+            # ── SICILIAN DRAGON ───────────────────────────────────────────
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 O-O Qd2 Nc6 Bc4 Bd7",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 Nc6 Bc4 Bd7 Qd2 O-O O-O-O Rb8",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be2 Bg7 O-O O-O f4 Nc6 Nb3",
+
+            # ── SICILIAN CLASSICAL (Scheveningen) ─────────────────────────
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 e6 Be2 Be7 O-O O-O f4 Nc6 Be3",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nf6 Nc3 d6 g4 h6 h4 Nc6 Rg1 d5",
+
+            # ── SICILIAN KAN / TAIMANOV ───────────────────────────────────
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6 Bd3 Nf6 O-O Qc7 Qe2 d6 c4 Nbd7",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 a6 Nxc6 bxc6 Bd3 d5 O-O Nf6",
+
+            # ── SICILIAN SVESHNIKOV ───────────────────────────────────────
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 Nf6 Nc3 e5 Ndb5 d6 Bg5 a6 Na3 b5",
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 Nf6 Nc3 e5 Ndb5 d6 Bg5 a6 Na3 b5 Bxf6 gxf6 Nd5 f5",
+
+            # ── FRENCH WINAWER ────────────────────────────────────────────
+            "e4 e6 d4 d5 Nc3 Bb4",
+            "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7 Qg4 Qc7 Qxg7 Rg8 Qxh7 cxd4",
+            "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Ba5 Qg4 Ne7 Qxg7 Rg8 Qxh7 cxd4 Ne2 Nbc6",
+
+            # ── FRENCH CLASSICAL ──────────────────────────────────────────
+            "e4 e6 d4 d5 Nc3 Nf6 Bg5 Be7 e5 Nfd7 Bxe7 Qxe7 f4 O-O Nf3 c5 Qd2 Nc6",
+
+            # ── FRENCH RUBINSTEIN ─────────────────────────────────────────
+            "e4 e6 d4 d5 Nc3 dxe4 Nxe4 Nd7 Nf3 Ngf6 Nxf6+ Nxf6 c3 c5 Be3 cxd4",
+
+            # ── FRENCH TARRASCH ───────────────────────────────────────────
+            "e4 e6 d4 d5 Nd2 Nf6 e5 Nfd7 Bd3 c5 c3 Nc6 Ne2 cxd4 cxd4 f6 exf6 Nxf6",
+
+            # ── CARO-KANN CLASSICAL ───────────────────────────────────────
+            "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7 h5 Bh7 Bd3 Bxd3 Qxd3 e6",
+
+            # ── CARO-KANN ADVANCE ─────────────────────────────────────────
+            "e4 c6 d4 d5 e5 Bf5 Nf3 e6 Be2 Nd7 O-O Ne7 Nbd2 h6 Nb3 Bg4 Bxg4",
+
+            # ── CARO-KANN EXCHANGE ────────────────────────────────────────
+            "e4 c6 d4 d5 exd5 cxd5 Bd3 Nc6 c3 Nf6 Bf4 Bg4 Qb3 Na5 Qa4+ Nc6",
+
+            # ── PIRC DEFENCE ──────────────────────────────────────────────
+            "e4 d6 d4 Nf6 Nc3 g6 f4 Bg7 Nf3 O-O Bd3 Na6 O-O c5 d5 Nc7",
+            "e4 d6 d4 Nf6 Nc3 g6 Be3 Bg7 Qd2 c6 f3 b5 Nge2 Nbd7 Bh6 Bxh6 Qxh6",
+
+            # ── MODERN DEFENCE ────────────────────────────────────────────
+            "e4 g6 d4 Bg7 Nc3 d6 f4 Nf6 Nf3 O-O Bd3 Na6 O-O c5 d5 Rb8",
+            "e4 g6 d4 Bg7 Nc3 d6 Be3 a6 Qd2 b5 f3 Nd7 Nh3 c5 dxc5 dxc5 Bxc5 Nxc5",
+
+            # ── KING'S INDIAN DEFENCE ─────────────────────────────────────
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7",
+            # Saemisch KID
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f3 O-O Be3 e5 d5 Nh5 Qd2 Qh4+ g3 Nxg3",
+            # Four Pawns KID
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f4 O-O Nf3 c5 d5 b5 cxb5 a6",
+            # Classical KID main line
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 Nd2 a5",
+            # Averbakh KID
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Be2 O-O Bg5 h6 Be3 e5 d5 Nh5",
+
+            # ── GRÜNFELD DEFENCE ──────────────────────────────────────────
+            "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Bc4 c5 Ne2 Nc6 Be3",
+            "d4 Nf6 c4 g6 Nc3 d5 Nf3 Bg7 e3 O-O b4 dxc4 Bxc4 c5 b5",
+            # Exchange Grünfeld
+            "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Nf3 c5 Be3 Qa5",
+
+            # ── NIMZO-INDIAN DEFENCE ──────────────────────────────────────
+            "d4 Nf6 c4 e6 Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5 O-O dxc4 Bxc4 cxd4 exd4",
+            # Rubinstein Nimzo
+            "d4 Nf6 c4 e6 Nc3 Bb4 e3 b6 Bd3 Bb7 Nf3 O-O O-O d5 cxd5 exd5 Ne5",
+            # Saemisch Nimzo
+            "d4 Nf6 c4 e6 Nc3 Bb4 a3 Bxc3+ bxc3 c5 f3 d5 cxd5 exd5 e3 O-O Ne2",
+            # Classical Nimzo
+            "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 d5 cxd5 exd5 Bg5 h6 Bh4 c5 dxc5 g5 Bg3 Ne4",
+
+            # ── QUEEN'S INDIAN DEFENCE ────────────────────────────────────
+            "d4 Nf6 c4 e6 Nf3 b6 g3 Ba6 b3 Bb4+ Bd2 Be7 Bg2 c6 Bc3 d5 Ne5",
+            "d4 Nf6 c4 e6 Nf3 b6 e3 Bb7 Bd3 d5 b3 Nbd7 O-O Bd6 Bb2 O-O Nbd2",
+
+            # ── SLAV DEFENCE ──────────────────────────────────────────────
+            "d4 d5 c4 c6 Nf3 Nf6 Nc3 a6 e3 b5 b3 Bg4 Bd3 e6 O-O Nbd7",
+            # Semi-Slav
+            "d4 d5 c4 c6 Nf3 Nf6 Nc3 e6 Bg5 h6 Bh4 dxc4 e4 g5 Bg3 b5",
+            # Meran variation
+            "d4 d5 c4 c6 Nf3 Nf6 Nc3 e6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 a6 e4 c5",
+
+            # ── DUTCH DEFENCE ─────────────────────────────────────────────
+            "d4 f5 g3 Nf6 Bg2 e6 Nf3 Be7 O-O O-O c4 d6 Nc3 Qe8 b3",
+            "d4 f5 c4 Nf6 g3 e6 Bg2 Bb4+ Bd2 Bxd2+ Qxd2 O-O Nf3 d6 O-O Qe8",
+            # Leningrad Dutch
+            "d4 f5 g3 Nf6 Bg2 g6 Nf3 Bg7 O-O d6 c4 O-O Nc3 c6 d5",
+            # Stonewall Dutch
+            "d4 f5 Nf3 e6 g3 Nf6 Bg2 d5 O-O Bd6 c4 c6 b3 Qe7 Bb2 b6",
+
+            # ── BENONI DEFENCE ────────────────────────────────────────────
+            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 Nf3 g6 Nd2 Bg7 e4 O-O Be2",
+            # Modern Benoni
+            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 e4 g6 Nf3 Bg7 Be2 O-O O-O Re8",
+
+            # ── KING'S INDIAN DEFENCE vs LONDON ──────────────────────────
+            "d4 Nf6 Nf3 g6 Bf4 Bg7 Nbd2 O-O e3 d6 Be2 c6 h3 Nbd7 O-O e5",
+
+            # ── ALEKHINE'S DEFENCE ────────────────────────────────────────
+            "e4 Nf6 e5 Nd5 d4 d6 Nf3 dxe5 Nxe5 g6 Bc4 Nb6 Bb3 Bg7 O-O O-O Re1",
+            "e4 Nf6 e5 Nd5 d4 d6 c4 Nb6 exd6 exd6 Nc3 Be7 Be3 O-O Rc1",
+
+            # ── SCANDINAVIAN (expanded) ───────────────────────────────────
+            "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 Bf5 Bc4 e6 Bd2 c6 Qe2 Bb4 O-O-O",
+            "e4 d5 exd5 Nf6 d4 Bg4 Nf3 Qxd5 Be2 e6 O-O Be7 c4 Qd8 Nc3 O-O h3 Bh5",
+
+            # ── OWEN'S DEFENCE ────────────────────────────────────────────
+            "e4 b6 d4 Bb7 Bd3 e6 Nf3 c5 c3 Nf6 Nbd2 cxd4 cxd4 d5 e5 Nfd7",
+
+            # ── NIMZOWITSCH DEFENCE ───────────────────────────────────────
+            "e4 Nc6 d4 d5 Nc3 dxe4 d5 Ne5 Qd4 Nf6 Qxe4 e6 dxe6 Bxe6 Nf3",
+
+            # ── POLISH OPENING (1.b4) ──────────────────────────────────────
+            # Main line
+            "b4 e5 Bb2 f6 b5 d5 e3 Be6 Nf3 Nd7 d4 dxe4 Nd2 Bd5 c4",
+            # Outflank Variation
+            "b4 c6 Bb2 a5 b5 cxb5 e4 e6 Bxb5 Nf6 Nf3 Be7 O-O O-O",
+            # Polish Gambit
+            "b4 e5 Bb2 Bxb4 Bxe5 Nf6 c4 O-O Nf3 d6 Bg3 Nc6",
+            # Symmetric Variation
+            "b4 b5 Bb2 Bb7 e3 e6 a3 a5 b5 Nf6 Nf3 Be7 d4 O-O",
+            # Polish vs d5
+            "b4 d5 Bb2 Nf6 e3 Bf5 Nf3 e6 Be2 Nbd7 O-O Bd6",
+            # King's Indian setup vs Polish
+            "b4 Nf6 Bb2 g6 b5 Bg7 e3 d6 d4 O-O Nf3 Nbd7 Be2",
+            # Bugayev Attack
+            "b4 e5 b5 Nf6 e4 Bc5 Bc4 O-O Ne2 c6 bxc6 dxc6 O-O Nc6",
+
+            # ── ENGLISH OPENING (1.c4) ─────────────────────────────────────
+            # Symmetrical: Two Knights
+            "c4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nf3 e6 O-O Nge7 d4 cxd4 Nxd4 O-O",
+            # Symmetrical: Hedgehog
+            "c4 c5 Nf3 Nf6 Nc3 e6 g3 b6 Bg2 Bb7 O-O Be7 d4 cxd4 Qxd4",
+            # Symmetrical with Nc3 Nd5
+            "c4 c5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2 Nc7 Nf3 Nc6 O-O e5",
+            # Reversed Sicilian (e5 system)
+            "c4 e5 Nc3 Nf6 Nf3 Nc6 g3 d5 cxd5 Nxd5 Bg2 Nb6 O-O Be7",
+            # Reversed Sicilian Kan
+            "c4 e5 Nc3 Nc6 Nf3 Nf6 g3 Bb4 Bg2 O-O O-O e4 Ng5 Bxc3",
+            # Four Knights English
+            "c4 e5 Nc3 Nf6 Nf3 Nc6 g3 Bb4 Bg2 O-O O-O Re8 d3 Bxc3",
+            # Anglo-Indian (Nf6 system)
+            "c4 Nf6 Nc3 e6 Nf3 d5 d4 Be7 Bg5 h6 Bh4 O-O e3 b6",
+            # Mikenas-Carls variation
+            "c4 Nf6 Nc3 e6 e4 d5 e5 d4 exf6 dxc3 bxc3 Qxf6",
+            # Anglo-Grünfeld
+            "c4 Nf6 Nc3 d5 cxd5 Nxd5 g3 g6 Bg2 Nxc3 bxc3 Bg7 Nf3 O-O O-O c5",
+            # English Opening vs King's Indian
+            "c4 Nf6 Nc3 g6 Nf3 Bg7 g3 O-O Bg2 d6 O-O e5 d3 Nc6 Rb1",
+            # Taimanov English
+            "c4 e5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6 Nf3 f5 O-O Nf6 Rb1",
+            # English Botvinnik System
+            "c4 c5 Nf3 Nc6 d4 cxd4 Nxd4 e5 Nc2 Nf6 Nc3 d6 e4 Be7 Be2 O-O",
+            # King's English (1.c4 e5 2.g3)
+            "c4 e5 g3 Nf6 Bg2 d5 cxd5 Nxd5 Nc3 Nb6 Nf3 Nc6 O-O Be7 d3 O-O",
+
+            # ── BIRD'S OPENING (1.f4) ──────────────────────────────────────
+            "f4 d5 Nf3 Nf6 e3 g6 Be2 Bg7 O-O O-O d3 c5 Qe1 Nc6 Qh4",
+            "f4 e5 fxe5 d6 exd6 Bxd6 Nf3 Nf6 g3 Ng4 Bg2 Nxh2 Rxh2",
+
+            # ── GROB ATTACK (1.g4) ─────────────────────────────────────────
+            "g4 d5 Bg2 Bxg4 c4 c3 Qb3 Bd7 Nf3 Nf6",
+
+            # ── VAN'T KRUIJS OPENING ──────────────────────────────────────
+            "e3 e5 d4 exd4 exd4 d5 Nf3 Nf6 Bd3 Bd6 O-O O-O",
+
+            # ── NIMZOWITSCH-LARSEN ATTACK ─────────────────────────────────
+            "b3 e5 Bb2 Nc6 e3 Nf6 Nf3 e4 Nd4 Bc5 Nxc6 dxc6 d4 exd3 Bxd3",
+            "Nf3 d5 b3 c5 Bb2 Nc6 e3 Nf6 Bb5 Bg4 h3 Bh5 O-O e6 d4",
+
+            # ── CATALAN (Black response with ...dxc4) ─────────────────────
+            "d4 Nf6 c4 e6 g3 d5 Bg2 dxc4 Nf3 Bd7 O-O Bc6 Qc2 Bxf3 exf3 Nd5",
+
+            # ── TARRASCH DEFENCE ──────────────────────────────────────────
+            "d4 d5 c4 e6 Nc3 c5 cxd5 exd5 Nf3 Nc6 g3 Nf6 Bg2 Be7 O-O O-O Bg5 cxd4",
+
+            # ── EXCHANGE QUEEN'S GAMBIT (Black) ───────────────────────────
+            "d4 d5 c4 dxc4 Nf3 Nf6 e3 e6 Bxc4 c5 O-O a6 dxc5 Bxc5 Qxd8+ Kxd8",
+
+            # ── SYMMETRICAL ENGLISH (Black) ───────────────────────────────
+            "c4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nf3 e6 O-O Nge7 d4 cxd4 Nxd4 O-O",
+
+            # ── ADDITIONAL RUY LOPEZ LINES ────────────────────────────────
+            # Zaitsev Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Bb7",
+            # Breyer Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Nb8",
+            # Chigorin Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Na5 Bc2 c5 d4 Qc7",
+            # Archangel Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O b5 Bb3 Bc5 c3 d6 d4 Bb6",
+
+            # ── ADDITIONAL SICILIAN LINES ─────────────────────────────────
+            # Accelerated Dragon
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6 Nc3 Bg7 Be3 Nf6 Bc4 O-O Bb3 d6",
+            # Taimanov Variation
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 Qc7 Be3 a6 Bd3 Nf6 O-O Ne5",
+            # Kalashnikov Variation
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 e5 Nb5 d6 N1c3 a6 Na3 b5 Nd5 Nge7",
+            # Polugaevsky Variation
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Bg5 e6 f4 b5 e5 dxe5 fxe5 Qc7",
+
+            # ── ADDITIONAL QUEEN'S GAMBIT LINES ──────────────────────────
+            # Ragozin Defence
+            "d4 d5 c4 e6 Nc3 Nf6 Nf3 Bb4 Bg5 Nbd7 cxd5 exd5 Qc2 c5",
+            # Vienna Variation QGD
+            "d4 d5 c4 e6 Nc3 Nf6 Nf3 dxc4 e3 c5 Bxc4 a6 O-O b5 Bd3 Bb7",
+            # Cambridge Springs Defence
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Nbd7 e3 c6 Nf3 Qa5 Nd2 Bb4 Qc2 O-O",
+            # Harrwitz Attack
+            "d4 d5 c4 e6 Nc3 Nf6 Bf4 Bd6 Bg3 O-O Nf3 b6 e3 Bb7 Be2 c5",
+
+            # ── ADDITIONAL KING'S INDIAN LINES ───────────────────────────
+            # Petrosian System
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 d5 a5 Bg5 Na6 Nd2 Nc5",
+            # Makogonov Variation
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O h3 e5 d5 Nh5 Nh2 Qe8 Be2 Nf4",
+            # Bayonet Attack KID
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 b4 Nh5",
+
+            # ── RETI / KING'S FIANCHETTO ──────────────────────────────────
+            "Nf3 Nf6 g3 g6 Bg2 Bg7 O-O O-O d3 d6 e4 e5 Nc3 Nc6 Be3",
+            "Nf3 d5 g3 c6 Bg2 Bg4 O-O Nd7 d3 e5 Nbd2 Ngf6 c4",
+            "Nf3 c5 c4 Nc6 d4 cxd4 Nxd4 Nf6 g3 g6 Bg2 d5 cxd5 Nxd5 O-O Bg7",
+
+            # ── SOKOLSKY / POLISH (1.b4) ADVANCED ────────────────────────
+            "b4 e6 Bb2 Nf6 b5 d5 e3 Nbd7 Nf3 Bd6 c4 c6 bxc6 bxc6 Be2 O-O",
+            "b4 d5 Bb2 c6 a3 Nf6 Nf3 Bg4 e3 e6 Be2 Nbd7 O-O Bd6 c4",
+
+            # ── KING'S INDIAN DEFENCE — GLIGORIC ─────────────────────────
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 Be3 exd4 Nxd4 Re8",
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 Nc6 d5 Ne7 Ne1 Nd7 Nd3 f5",
+
+            # ── NIMZO-INDIAN — ZÜRICH VARIATION ───────────────────────────
+            "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 d5 cxd5 Qxd5 Nf3 Qf5 Qxf5 exf5 a3 Be7",
+            "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 c5 dxc5 O-O a3 Bxc3+ Qxc3 b6 Bg5 Bb7",
+
+            # ── QUEEN'S GAMBIT DECLINED — LASKER ─────────────────────────
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 Ne4 Bxe7 Qxe7 cxd5 Nxc3",
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 Ne4 Bxe7 Qxe7 Nxe4 dxe4 Nd2 f5",
+
+            # ── SEMI-TARRASCH ─────────────────────────────────────────────
+            "d4 d5 c4 e6 Nc3 Nf6 Nf3 c5 cxd5 Nxd5 e3 Nc6 Bd3 Be7 O-O O-O a3",
+            "d4 Nf6 c4 e6 Nf3 d5 Nc3 c5 cxd5 Nxd5 e3 Nc6 Bd3 Be7 O-O O-O",
+
+            # ── STONEWALL DUTCH — BLACK ──────────────────────────────────
+            "d4 f5 Nf3 Nf6 g3 e6 Bg2 d5 O-O c6 c4 Bd6 Nc3 Qe7 Ne5 O-O f3",
+            "d4 e6 Nf3 f5 g3 Nf6 Bg2 d5 O-O Bd6 b3 O-O Bb2 c6 Ne5 Qe7",
+
+            # ── BUDAPEST GAMBIT — RUBINSTEIN ──────────────────────────────
+            "d4 Nf6 c4 e5 dxe5 Ne4 Nf3 Bb4+ Nbd2 Nc6 a3 Bxd2+ Bxd2 Nxd2 Qxd2",
+            "d4 Nf6 c4 e5 dxe5 Ne4 Nd2 Nxd2 Bxd2 d6 exd6 Bxd6 Nf3 Nc6 e3",
+
+            # ── ENGLISH OPENING — KINGS ENGLISH ──────────────────────────
+            "c4 e5 g3 Nf6 Bg2 d5 cxd5 Nxd5 Nc3 Nb6 Nf3 Nc6 O-O Be7 d3 O-O",
+            "c4 e5 Nc3 d6 g3 f5 Bg2 Nf6 d3 g6 e4 fxe4 dxe4 Bg7 Nge2 O-O",
+
+            # ── TARRASCH DEFENCE — RUBINSTEIN VARIATION ───────────────────
+            "d4 d5 c4 e6 Nc3 c5 cxd5 exd5 Nf3 Nc6 g3 Be6 Bg2 Be7 O-O Nf6 Bg5",
+            "d4 d5 c4 e6 Nc3 c5 Nf3 Nc6 cxd5 exd5 Bg5 f6 Bf4 Bg4 e3 Nge7",
+
+            # ── QUEEN'S GAMBIT — BALTIC DEFENCE ──────────────────────────
+            "d4 d5 c4 Bf5 cxd5 Bxb1 Rxb1 Qxd5 Nf3 e6 g3 Nf6 Bg2 c6 O-O",
+
+            # ── KING'S GAMBIT — BECKER DEFENCE ───────────────────────────
+            "e4 e5 f4 exf4 Nf3 h6 d4 d6 Bxf4 g5 Be3 Nf6 Nc3 Bg7 Bd3",
+
+            # ── FOUR KNIGHTS — SPANISH FOUR KNIGHTS ──────────────────────
+            "e4 e5 Nf3 Nc6 Nc3 Nf6 Bb5 Bb4 O-O O-O d3 Bxc3 bxc3 d5 exd5 Qxd5",
+            "e4 e5 Nf3 Nc6 Nc3 Nf6 Bb5 Nd4 Nxd4 exd4 Nd5 Nxd5 exd5 Qe7 Qe2 Qxe2+",
+
+            # ── CARO-KANN — FANTASY VARIATION ────────────────────────────
+            "e4 c6 d4 d5 f3 e6 Nc3 dxe4 fxe4 e5 Nf3 exd4 Nxd4 Nf6 Bg5 Be7",
+            "e4 c6 d4 d5 f3 dxe4 fxe4 e5 Nf3 Bg4 Bc4 exd4 c3 dxc3 Nxc3 Bxf3",
+
+            # ── GRÜNFELD — NADANIAN ATTACK ────────────────────────────────
+            "d4 Nf6 c4 g6 Nc3 d5 h4 dxc4 e4 Bg7 Bxc4 O-O Nge2 c5 Be3 Nc6",
+
+            # ── SICILIAN — MOSCOW VARIATION ───────────────────────────────
+            "e4 c5 Nf3 d6 Bb5+ Nc6 O-O Bd7 Re1 Nf6 c3 a6 Bf1 Bg4 h3 Bh5",
+            "e4 c5 Nf3 d6 Bb5+ Bd7 Bxd7+ Qxd7 c4 Nc6 Nc3 Nf6 d4 cxd4 Nxd4",
+
+            # ── SICILIAN — ROSSOLIMO VARIATION ────────────────────────────
+            "e4 c5 Nf3 Nc6 Bb5 g6 Bxc6 dxc6 d3 Bg7 h3 Nf6 Nc3 O-O Be3",
+            "e4 c5 Nf3 Nc6 Bb5 e6 O-O Nge7 Re1 a6 Bf1 d5 exd5 exd5 d4",
+
+            # ── ENGLISH DEFENCE ───────────────────────────────────────────
+            "d4 e6 c4 b6 e4 Bb7 Bd3 f5 exf5 exf5 Nc3 Nf6 Nge2 Nc6 O-O Bd6",
+            "d4 e6 Nf3 b6 g3 Bb7 Bg2 f5 c4 Nf6 Nc3 Bb4 O-O O-O d5",
+
+            # ── TORRE ATTACK — BEVERWIJK ──────────────────────────────────
+            "d4 Nf6 Nf3 e6 Bg5 c5 e3 Be7 Nbd2 b6 c3 Bb7 Bd3 h6 Bh4 d6 O-O",
+
+            # ── LONDON SYSTEM — ACCELERATED ──────────────────────────────
+            "d4 d5 Bf4 e6 e3 Nf6 Nd2 Be7 Ngf3 b6 Ne5 Bb7 Bd3 c5 c3 Nc6 Ndf3",
+
+            # ── PETROV — COCHRANE GAMBIT ──────────────────────────────────
+            "e4 e5 Nf3 Nf6 Nxe5 d6 Nxf7 Kxf7 d4 c5 dxc5 Nc6 Bc4+ Ke8 O-O",
+
+            # ── QUEEN'S PAWN GAME — OLD INDIAN ───────────────────────────
+            "d4 d6 e4 Nf6 Nc3 e5 dxe5 dxe5 Qxd8+ Kxd8 f4 Bd6 Bc4 Ke7 Nf3",
+
+            # ── DUTCH — ANTI-LENINGRAD ────────────────────────────────────
+            "d4 f5 Nc3 Nf6 Bg5 d6 e3 e6 Bd3 Be7 Nge2 O-O O-O Nc6 Qd2 Ne4",
+
+            # ── KING'S INDIAN ATTACK — SICILIAN SETUP ────────────────────
+            "Nf3 c5 g3 d5 Bg2 Nf6 O-O Nc6 d3 e5 e4 d4 a4 Be7 Na3 O-O Nc4",
+
+            # ── BENKO GAMBIT — ACCEPTED FIANCHETTO ───────────────────────
+            "d4 Nf6 c4 c5 d5 b5 cxb5 a6 bxa6 g6 Nc3 Bxa6 Nf3 d6 g3 Bg7 Bg2",
+
+            # ── NIMZOWITSCH / LARSEN ATTACK — ENGLISH HYBRID ─────────────
+            "b3 d5 Bb2 c5 e3 Nc6 Bb5 Nf6 Nf3 Bd7 O-O e6 d3 Be7 Nbd2",
+
+            # ── CARO-KANN — KARPOV VARIATION ─────────────────────────────
+            "e4 c6 d4 d5 Nd2 dxe4 Nxe4 Nd7 Ng5 Ngf6 Bd3 e6 N1f3 Bd6 Qe2 h6",
+            "e4 c6 d4 d5 Nd2 dxe4 Nxe4 Bf5 Ng3 Bg6 Nf3 Nd7 h4 h6 Bd3 Bxd3 Qxd3",
+
+            # ── SICILIAN — PAULSEN/TAIMANOV HYBRID ───────────────────────
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 a6 Nxc6 bxc6 Bd3 d5 O-O Nf6 Qf3",
+
+            # ── FRENCH — GUIMARD VARIATION ────────────────────────────────
+            "e4 e6 d4 d5 Nc3 Nc6 Nf3 Nf6 e5 Ne4 Bd3 Nxc3 bxc3 f6 exf6 Qxf6",
+
+            # ── NIMZO-INDIAN — LENINGRAD SYSTEM ──────────────────────────
+            "d4 Nf6 c4 e6 Nc3 Bb4 Bg5 c5 d5 h6 Bh4 Bxc3+ bxc3 d6 e3 e5",
+
+            # ── QUEEN'S GAMBIT — CHIGORIN DEFENCE ────────────────────────
+            "d4 d5 c4 Nc6 Nc3 e5 dxe5 d4 Ne4 Bf5 Ng3 Bg6 Nf3 Bb4+ Bd2 Bxd2+",
+            "d4 d5 c4 Nc6 Nf3 Bg4 cxd5 Bxf3 gxf3 Qxd5 e3 e5 Nc3 Bb4 Bd2 Bxc3",
+
+            # ── ALEKHINE — BUDAPEST GAMBIT LINK ──────────────────────────
+            "e4 Nf6 Nc3 d5 exd5 Nxd5 d4 g6 Nf3 Bg7 Bc4 Nb6 Bb3 O-O O-O Nc6",
+
+            # ── MODERN DEFENCE — AVERBAKH SYSTEM ─────────────────────────
+            "e4 g6 d4 Bg7 c4 d6 Nc3 e5 d5 Nce7 g3 f5 Bg2 Nf6 Nge2 O-O",
+
+            # ── PIRC — BYRNE VARIATION ─────────────────────────────────
+            "e4 d6 d4 Nf6 Nc3 g6 Bg5 Bg7 e5 Nfd7 f4 dxe5 fxe5 c5 Nf3 Nc6",
         ]
 
         book = {}
@@ -1671,11 +2354,12 @@ def evaluate(board, tb=None):
     if tb is not None:
         result, dtm = tb.probe(board)
         if result == 'win':
+            # Current side to move wins
             score = MATE_SCORE//2 + (1000 if dtm is None else max(0, 500-dtm*10))
-            return score if board.side==WHITE else -score
+            return score
         elif result == 'lose':
-            score = -(MATE_SCORE//2)
-            return score if board.side==WHITE else -score
+            # Current side to move loses
+            return -(MATE_SCORE//2)
         elif result == 'draw':
             return 0
 
@@ -1816,8 +2500,9 @@ class Engine:
             a=board.sq[m.from_sq][1]
             return 900_000+v*10-a
         if m.promotion is not None: return 800_000+MG_VAL[m.promotion]
-        for i,k in enumerate(self.killers[ply]):
-            if m==k: return 700_000-i*1000
+        if ply < MAX_PLY:
+            for i,k in enumerate(self.killers[ply]):
+                if m==k: return 700_000-i*1000
         return self.history.get((board.side,m.from_sq,m.to_sq),0)
 
     def order(self,board,moves,ply,tt_mv):
@@ -1862,7 +2547,13 @@ class Engine:
         if not moves:
             return -(MATE_SCORE-ply) if in_check else 0
         if null_ok and not in_check and depth>=3 and ply>0:
-            b=board.copy(); b.side=1-b.side; b.ep=None; b.zobrist^=ZOB_SIDE
+            b=board.copy()
+            # XOR out the old EP contribution before clearing it
+            if b.ep is not None:
+                b.zobrist ^= ZOB_EP[b.ep%8+1]
+                b.zobrist ^= ZOB_EP[0]  # XOR in "no EP"
+                b.ep=None
+            b.side=1-b.side; b.zobrist^=ZOB_SIDE
             sc=-self.pvs(b,depth-3,-beta,-beta+1,ply+1,False)
             if sc>=beta and abs(sc)<MATE_SCORE//2: return beta
         if depth<=3 and not in_check and abs(alpha)<MATE_SCORE//2 and abs(beta)<MATE_SCORE//2:
@@ -1895,8 +2586,9 @@ class Engine:
                 if ply==0: self.best=m
             if alpha>=beta:
                 if not is_cap:
-                    if m!=self.killers[ply][0]:
-                        self.killers[ply][1]=self.killers[ply][0]; self.killers[ply][0]=m
+                    if ply < MAX_PLY:
+                        if m!=self.killers[ply][0]:
+                            self.killers[ply][1]=self.killers[ply][0]; self.killers[ply][0]=m
                     k=(board.side,m.from_sq,m.to_sq)
                     self.history[k]=self.history.get(k,0)+depth*depth
                 break
@@ -2068,8 +2760,13 @@ def analyze_game(san_log, engine_time=2.0, depth_limit=18):
         # ── Book check ────────────────────────────────────────────────────
         is_book_move = False
         if book:
-            book_mv = book.pick(board)
-            is_book_move = (book_mv is not None and book_mv == m)
+            # Check ALL book moves for this position, not just the weighted pick
+            book_moves = book.probe(board)  # returns [(san, weight), ...]
+            for book_san, _ in book_moves:
+                book_m = board.parse_san(book_san)
+                if book_m is not None and book_m == m:
+                    is_book_move = True
+                    break
 
         # ── Sacrifice detection ───────────────────────────────────────────
         # A REAL sacrifice means the moving piece is worth MORE than what it
@@ -2227,6 +2924,37 @@ def print_analysis(results):
 # ════════════════════════════════════════════════════════════════════════
 ELO_FILE = os.path.expanduser("~/.chess_elo.json")
 ONLINE_GAMES_FILE = os.path.expanduser("~/.chess_online_games.json")
+BOT_SAVE_FILE     = os.path.expanduser("~/.chess_bot_save.json")
+
+
+def save_bot_game(state: dict) -> bool:
+    """Persist a bot game state to disk for resuming later."""
+    try:
+        with open(BOT_SAVE_FILE, 'w') as f:
+            json.dump(state, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def load_bot_save() -> dict | None:
+    """Load the most-recently saved bot game, or None if none exists."""
+    try:
+        if os.path.exists(BOT_SAVE_FILE):
+            with open(BOT_SAVE_FILE, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
+
+def delete_bot_save():
+    """Remove the saved bot game file."""
+    try:
+        if os.path.exists(BOT_SAVE_FILE):
+            os.remove(BOT_SAVE_FILE)
+    except Exception:
+        pass
 ENGINE_NAME = "ChessBot-9000"
 
 def save_online_game(white, black, result, moves, duration, rated=True):
@@ -2291,65 +3019,162 @@ def mark_game_analyzed(game_id):
         pass
 
 class EloSystem:
+    """
+    ELO system with separate ratings per time-control category.
+    Categories: 'bullet', 'blitz', 'rapid', 'classical', 'unlimited'
+    Each player gets an independent rating per category.
+    """
+
+    CATEGORIES = ('bullet', 'blitz', 'rapid', 'classical', 'unlimited')
+
+    @staticmethod
+    def category_for(minutes):
+        """Map minutes-per-side to a rating category."""
+        if minutes <= 0:    return 'unlimited'
+        if minutes <= 2:    return 'bullet'
+        if minutes <= 5:    return 'blitz'
+        if minutes <= 15:   return 'rapid'
+        return 'classical'
+
     def __init__(self):
         self.db = self._load()
 
     def _load(self):
         try:
-            with open(ELO_FILE,'r') as f:
+            with open(ELO_FILE, 'r') as f:
                 return json.loads(f.read())
-        except:
-            return {ENGINE_NAME: {'elo':2200,'games':0,'wins':0,'draws':0,'losses':0}}
+        except Exception:
+            return {ENGINE_NAME: self._new_entry(2200)}
 
     def _save(self):
         try:
-            with open(ELO_FILE,'w') as f:
+            with open(ELO_FILE, 'w') as f:
                 f.write(json.dumps(self.db, indent=2))
-        except:
+        except Exception:
             pass
 
-    def get_elo(self, name):
+    def _new_entry(self, start=1200):
+        """Create a fresh player entry with per-category ratings."""
+        entry = {'games': 0, 'wins': 0, 'draws': 0, 'losses': 0}
+        for cat in self.CATEGORIES:
+            entry[cat] = {'elo': start, 'games': 0, 'wins': 0, 'draws': 0, 'losses': 0}
+        # Keep legacy 'elo' field for compatibility
+        entry['elo'] = start
+        return entry
+
+    def _ensure(self, name):
         if name not in self.db:
-            self.db[name]={'elo':1200,'games':0,'wins':0,'draws':0,'losses':0}
-        return self.db[name]['elo']
+            self.db[name] = self._new_entry()
+        # Migrate old entries that lack per-category data
+        entry = self.db[name]
+        for cat in self.CATEGORIES:
+            if cat not in entry:
+                entry[cat] = {'elo': entry.get('elo', 1200),
+                              'games': 0, 'wins': 0, 'draws': 0, 'losses': 0}
+
+    def get_elo(self, name, category='unlimited'):
+        self._ensure(name)
+        cat = category if category in self.CATEGORIES else 'unlimited'
+        return self.db[name][cat]['elo']
 
     def expected(self, ra, rb):
-        return 1.0/(1.0+10**((rb-ra)/400.0))
+        return 1.0 / (1.0 + 10 ** ((rb - ra) / 400.0))
 
-    def update(self, player, opponent, result):
-        """result: 1=win, 0.5=draw, 0=loss"""
+    def update(self, player, opponent, result, category='unlimited'):
+        """
+        result: 1=win  0.5=draw  0=loss  (from player's perspective)
+        category: one of CATEGORIES
+        """
+        cat = category if category in self.CATEGORIES else 'unlimited'
         for n in (player, opponent):
-            if n not in self.db:
-                self.db[n]={'elo':1200,'games':0,'wins':0,'draws':0,'losses':0}
-        ra=self.db[player]['elo']; rb=self.db[opponent]['elo']
-        ea=self.expected(ra,rb); K=32
-        new_ra=ra+K*(result-ea)
-        self.db[player]['elo']=round(new_ra)
-        self.db[player]['games']+=1
-        if result==1:   self.db[player]['wins']+=1
-        elif result==0.5: self.db[player]['draws']+=1
-        else:           self.db[player]['losses']+=1
-        # Update opponent
-        eb=self.expected(rb,ra)
-        new_rb=rb+K*((1-result)-eb)
-        self.db[opponent]['elo']=round(new_rb)
-        self.db[opponent]['games']+=1
-        if result==0:   self.db[opponent]['wins']+=1
-        elif result==0.5: self.db[opponent]['draws']+=1
-        else:           self.db[opponent]['losses']+=1
-        self._save()
+            self._ensure(n)
 
-    def leaderboard(self, n=10):
-        ranked=sorted(self.db.items(), key=lambda x:-x[1]['elo'])
-        print("\n  ┌─────────────────────────────────────────────┐")
-        print(  "  │              ELO LEADERBOARD                │")
-        print(  "  ├──────┬────────────────────┬──────┬─────────┤")
-        print(  "  │ Rank │ Player             │  ELO │  W/D/L  │")
-        print(  "  ├──────┼────────────────────┼──────┼─────────┤")
-        for i,(name,d) in enumerate(ranked[:n]):
-            w=d.get('wins',0); dr=d.get('draws',0); l=d.get('losses',0)
-            print(f"  │  {i+1:>2}  │ {name:<18} │ {d['elo']:>4} │ {w}/{dr}/{l:<4} │")
-        print(  "  └──────┴────────────────────┴──────┴─────────┘\n")
+        ra = self.db[player][cat]['elo']
+        rb = self.db[opponent][cat]['elo']
+        ea = self.expected(ra, rb)
+        # K-factor: higher for new players, lower for established
+        games = self.db[player][cat]['games']
+        K = 40 if games < 30 else (20 if games < 100 else 10)
+
+        # Update player
+        new_ra = round(ra + K * (result - ea))
+        self.db[player][cat]['elo']   = new_ra
+        self.db[player][cat]['games'] += 1
+        self.db[player]['games'] += 1
+        if result == 1:
+            self.db[player][cat]['wins']   += 1
+            self.db[player]['wins']         += 1
+        elif result == 0.5:
+            self.db[player][cat]['draws']  += 1
+            self.db[player]['draws']        += 1
+        else:
+            self.db[player][cat]['losses'] += 1
+            self.db[player]['losses']       += 1
+        self.db[player]['elo'] = new_ra  # keep legacy field updated
+
+        # Update opponent
+        eb = self.expected(rb, ra)
+        Kb = 40 if self.db[opponent][cat]['games'] < 30 else \
+             (20 if self.db[opponent][cat]['games'] < 100 else 10)
+        opp_result = 1 - result
+        new_rb = round(rb + Kb * (opp_result - eb))
+        self.db[opponent][cat]['elo']   = new_rb
+        self.db[opponent][cat]['games'] += 1
+        self.db[opponent]['games'] += 1
+        if opp_result == 1:
+            self.db[opponent][cat]['wins']   += 1
+            self.db[opponent]['wins']         += 1
+        elif opp_result == 0.5:
+            self.db[opponent][cat]['draws']  += 1
+            self.db[opponent]['draws']        += 1
+        else:
+            self.db[opponent][cat]['losses'] += 1
+            self.db[opponent]['losses']       += 1
+        self.db[opponent]['elo'] = new_rb
+
+        self._save()
+        return new_ra - ra  # return ELO change for player
+
+    def leaderboard(self, n=10, category=None):
+        """Show leaderboard.  If category given, sort by that category's ELO."""
+        cat = category or 'unlimited'
+        if cat not in self.CATEGORIES:
+            cat = 'unlimited'
+
+        def sort_key(item):
+            entry = item[1]
+            if cat in entry:
+                return -entry[cat]['elo']
+            return -entry.get('elo', 1200)
+
+        ranked = sorted(self.db.items(), key=sort_key)
+
+        cat_label = cat.capitalize()
+        print(f"\n  ┌──────────────────────────────────────────────────────────────┐")
+        print(f"  │          ELO LEADERBOARD  [{cat_label:^10}]                     │")
+        print(f"  ├──────┬────────────────────┬───────┬────────┬────────┬────────┤")
+        print(f"  │ Rank │ Player             │ {cat_label[:6]:<6} │ Bullet │ Blitz  │ Rapid  │")
+        print(f"  ├──────┼────────────────────┼───────┼────────┼────────┼────────┤")
+        for i, (name, d) in enumerate(ranked[:n]):
+            self._ensure(name)
+            bul = d['bullet']['elo']
+            blz = d['blitz']['elo']
+            rap = d['rapid']['elo']
+            cur = d[cat]['elo']
+            print(f"  │  {i+1:>2}  │ {name[:18]:<18} │ {cur:>5} │ {bul:>6} │ {blz:>6} │ {rap:>6} │")
+        print(f"  └──────┴────────────────────┴───────┴────────┴────────┴────────┘\n")
+
+        # Show all category ELOs for top player
+        if ranked:
+            name, d = ranked[0]
+            self._ensure(name)
+            print(f"  {name}'s ratings across all categories:")
+            for c in self.CATEGORIES:
+                g = d[c]['games']
+                e = d[c]['elo']
+                w = d[c]['wins']; dr = d[c]['draws']; l = d[c]['losses']
+                print(f"    {c.capitalize():<12}: {e:>4}  ({g} games, {w}W/{dr}D/{l}L)")
+            print()
 
 
 def show_online_leaderboard(n=10):
@@ -2413,12 +3238,15 @@ def show_online_leaderboard(n=10):
         losses = entry.get('losses', 0)
         games = entry.get('games', 0)
         peak = entry.get('peak', elo)
+        is_provisional = entry.get('is_provisional', games < 20)
         
         # Format record
         record = f"{wins}W/{draws}D/{losses}L"
+        prov_mark = '?' if is_provisional else ''
         peak_indicator = " ▲" if elo == peak and games > 5 else ""
+        elo_str = f"{elo}{prov_mark}{peak_indicator}"
         
-        print(f"  ║ {i:>4} ║ {username:<22} ║ {elo:>5}{peak_indicator}   ║ {record:<18} ║")
+        print(f"  ║ {i:>4} ║ {username:<22} ║ {elo_str:<9} ║ {record:<18} ║")
     
     print("  ╚══════╩════════════════════════╩═════════╩════════════════════╝")
     print()
@@ -2576,6 +3404,44 @@ MSG_CHALLENGE_RESPONSE = 'CHALLENGE_RESPONSE'
 MSG_CHALLENGE_LIST = 'CHALLENGE_LIST'
 MSG_CHALLENGE_CANCEL = 'CHALLENGE_CANCEL'
 
+# Spectator message types
+MSG_SPECTATE_JOIN = 'SPECTATE_JOIN'
+MSG_SPECTATE_LEAVE = 'SPECTATE_LEAVE'
+MSG_SPECTATE_LIST = 'SPECTATE_LIST'
+MSG_SPECTATE_UPDATE = 'SPECTATE_UPDATE'
+
+# Rematch message types
+MSG_REMATCH_REQUEST = 'REMATCH_REQUEST'
+MSG_REMATCH_RESPONSE = 'REMATCH_RESPONSE'
+
+# Game clock message types
+MSG_GAME_CLOCK_UPDATE = 'GAME_CLOCK_UPDATE'
+MSG_GAME_TIMEOUT = 'GAME_TIMEOUT'
+
+# Player profile / avatar message types
+MSG_SET_AVATAR = 'SET_AVATAR'
+MSG_GET_AVATAR = 'GET_AVATAR'
+
+# Chat history message type
+MSG_GAME_CHAT_HISTORY = 'GAME_CHAT_HISTORY'
+
+# ── v2.0 additions: lobby chat, daily puzzle, achievements, tournaments ──
+MSG_LOBBY_CHAT           = 'LOBBY_CHAT'
+MSG_LOBBY_CHAT_HISTORY   = 'LOBBY_CHAT_HISTORY'
+MSG_DAILY_PUZZLE         = 'DAILY_PUZZLE'
+MSG_ACHIEVEMENTS         = 'ACHIEVEMENTS'
+MSG_ACHIEVEMENT_UNLOCKED = 'ACHIEVEMENT_UNLOCKED'
+MSG_ANALYSIS_REQUEST     = 'ANALYSIS_REQUEST'
+MSG_ANALYSIS_RESULT      = 'ANALYSIS_RESULT'
+MSG_TOURNAMENT_CREATE    = 'TOURNAMENT_CREATE'
+MSG_TOURNAMENT_JOIN      = 'TOURNAMENT_JOIN'
+MSG_TOURNAMENT_LIST      = 'TOURNAMENT_LIST'
+MSG_TOURNAMENT_STATUS    = 'TOURNAMENT_STATUS'
+MSG_TOURNAMENT_RESULT    = 'TOURNAMENT_RESULT'
+MSG_RECONNECT            = 'RECONNECT'
+MSG_FRIEND_HEARTBEAT     = 'FRIEND_HEARTBEAT'
+MSG_SERVER_BROADCAST     = 'SERVER_BROADCAST'
+
 # Response types
 RESP_SUCCESS = 'SUCCESS'
 RESP_ERROR = 'ERROR'
@@ -2591,10 +3457,10 @@ class ChessClient:
     Does not require importing server.py - uses pure socket communication.
     """
 
-    def __init__(self, host='localhost', port=65433):
+    def __init__(self, host=None, port=None):
         """Initialize client with message routing."""
-        self.host = host
-        self.port = port
+        self.host = host or 'localhost'
+        self.port = port or 65433
         self.sock = None
         self.pending = b''
         self.logged_in_user = None
@@ -2604,37 +3470,35 @@ class ChessClient:
         self.client_public = None
         self._nonce_counter = 0
 
-        # Message routing - separate queues for sync and async messages
+        # Message routing — two queues: async push notifications vs sync responses
         self._msg_lock = threading.Lock()
-        self._sync_queue = queue.Queue()  # For request/response
-        self._async_queue = queue.Queue()  # For async notifications
-        self._response_handlers = {}  # request_id -> queue
+        self._async_queue = queue.Queue()   # push notifications (match found, moves, etc.)
+        self._sync_queue  = queue.Queue()   # request/response pairs
+        self._response_handlers = {}
         self._request_counter = 0
 
-        # Async message types - initialized in _init_async_types() after constants are defined
+        # Async message types — populated in _init_async_types()
         self.ASYNC_TYPES = set()
 
         # Start background listener
         self._listener_stop = threading.Event()
         self._start_listener()
 
+    # ════════════════════════════════════════════════════════════════════
+    #  E2E ENCRYPTION HELPERS
+    # ════════════════════════════════════════════════════════════════════
     def _derive_nonce(self):
         """Derive a unique nonce for each message (12 bytes for GCM).
-        
-        Uses a different nonce space than the server to avoid nonce reuse:
-        - Client uses nonces with bit 0 = 0 (even counter values)
-        - Server uses nonces with bit 0 = 1 (odd counter values)
+
+        Client uses even counter values; server uses odd — avoids nonce reuse.
         """
         self._nonce_counter += 1
-        # Pack counter as 8-byte big-endian, then pad to 12 bytes
-        # Ensure the last bit is 0 to distinguish from server nonces
         nonce_bytes = b'\x00\x00\x00\x00' + struct.pack('>Q', self._nonce_counter)
-        # Clear the last bit to distinguish from server nonces
+        # Clear the last bit (client = even)
         nonce_bytes = nonce_bytes[:-1] + bytes([nonce_bytes[-1] & 0xFE])
         return nonce_bytes
 
     def _encrypt_message(self, plaintext: bytes) -> bytes:
-        """Encrypt a message using session key."""
         if not self.encryption_enabled or self.session_key is None:
             return plaintext
         nonce = self._derive_nonce()
@@ -2642,7 +3506,6 @@ class ChessClient:
         return b'E' + nonce + ciphertext + tag
 
     def _decrypt_message(self, ciphertext: bytes) -> bytes:
-        """Decrypt a message using session key."""
         if not self.encryption_enabled or self.session_key is None:
             return ciphertext
         if len(ciphertext) < 29:
@@ -2658,18 +3521,22 @@ class ChessClient:
     #  MESSAGE ROUTING SYSTEM
     # ════════════════════════════════════════════════════════════════════
     def _init_async_types(self):
-        """Initialize async message types (called after constants are defined)."""
-        if not self.ASYNC_TYPES:  # Only initialize once
+        """Populate the set of async push-notification message types."""
+        if not self.ASYNC_TYPES:
             self.ASYNC_TYPES = {
                 MSG_MATCH, MSG_GAME_MOVE, MSG_GAME_RESIGN,
                 MSG_GAME_DRAW_OFFER, MSG_GAME_DRAW_ACCEPT, MSG_GAME_CHAT,
                 MSG_NEW_MESSAGE_NOTIFY, MSG_FRIEND_REQUEST, MSG_FRIEND_STATUS,
-                MSG_CHALLENGE_SEND
+                MSG_CHALLENGE_SEND,
+                MSG_SPECTATE_UPDATE, MSG_GAME_CLOCK_UPDATE, MSG_GAME_TIMEOUT,
+                MSG_REMATCH_REQUEST, MSG_REMATCH_RESPONSE,
+                # v2.0 push types
+                MSG_FRIEND_HEARTBEAT, MSG_LOBBY_CHAT, MSG_ANALYSIS_RESULT,
+                MSG_ACHIEVEMENT_UNLOCKED, MSG_SERVER_BROADCAST,
             }
 
     def _start_listener(self):
         """Start background message listener thread."""
-        # Initialize async types before starting listener
         self._init_async_types()
 
         def listener_loop():
@@ -2678,30 +3545,23 @@ class ChessClient:
                     msg = self._recv_raw(timeout=0.5)
                     if msg:
                         msg_type = msg.get('type', '')
-                        with self._msg_lock:
-                            # Route to appropriate handler
-                            if msg_type in self.ASYNC_TYPES:
-                                # Async notification - queue for main loop
-                                self._async_queue.put(msg)
-                            else:
-                                # Response type - queue for request handlers
-                                self._sync_queue.put(msg)
-                except:
+                        if msg_type in self.ASYNC_TYPES:
+                            self._async_queue.put(msg)
+                        else:
+                            self._sync_queue.put(msg)
+                except Exception:
                     pass
 
         self._listener_thread = threading.Thread(target=listener_loop, daemon=True)
         self._listener_thread.start()
 
     def _recv_raw(self, timeout=5.0):
-        """Raw receive - reads from socket and parses message."""
+        """Raw receive — reads from socket and parses one message."""
         if not self.sock:
             return None
-
         self.sock.settimeout(timeout)
         retries = 0
-        max_retries = 3
-
-        while retries < max_retries:
+        while retries < 3:
             try:
                 if len(self.pending) >= 4:
                     length = struct.unpack('>I', self.pending[:4])[0]
@@ -2715,44 +3575,46 @@ class ChessClient:
                         if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
                             payload = self._decrypt_message(payload)
                         return json.loads(payload.decode())
-
                 try:
                     chunk = self.sock.recv(4096)
                     if not chunk:
                         return None
                     self.pending += chunk
-                    continue
                 except socket.timeout:
-                    if len(self.pending) == 0:
+                    if not self.pending:
                         retries += 1
-                    continue
-
             except Exception:
                 retries += 1
-                continue
-
         return None
 
     def recv(self, timeout=5.0):
-        """Receive a message (used by background listener)."""
+        """Receive an async push notification (non-blocking friendly)."""
         try:
             return self._async_queue.get(timeout=timeout)
         except queue.Empty:
             return None
 
     def recv_sync(self, timeout=10.0):
-        """
-        Receive a synchronous response (for request/response pattern).
-        Waits for a non-async message type.
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
+        """Receive a synchronous response, re-queuing any async messages encountered."""
+        start = time.time()
+        stash = []
+        result = None
+        while time.time() - start < timeout:
             try:
-                msg = self._sync_queue.get(timeout=0.5)
-                return msg
+                msg = self._sync_queue.get(timeout=0.3)
+                msg_type = msg.get('type', '')
+                if msg_type in self.ASYNC_TYPES:
+                    # Accidentally landed in sync queue — reroute
+                    self._async_queue.put(msg)
+                else:
+                    result = msg
+                    break
             except queue.Empty:
                 continue
-        return None
+        # Put back any stashed items (shouldn't happen with proper routing)
+        for m in stash:
+            self._sync_queue.put(m)
+        return result
 
     def connect(self):
         """Connect to the server."""
@@ -2762,13 +3624,13 @@ class ChessClient:
             self.sock.settimeout(10.0)
             self.sock.connect((self.host, self.port))
             self.sock.settimeout(None)
-            self.pending = b''  # Clear any pending data
-            print(f"  TCP connection established")
+            self.pending = b''
+            print("  TCP connection established")
             return True, "Connected to server"
         except socket.timeout:
-            return False, f"Connection timed out"
+            return False, "Connection timed out"
         except ConnectionRefusedError:
-            return False, f"Connection refused - is the server running?"
+            return False, "Connection refused — is the server running?"
         except Exception as e:
             return False, f"Connection failed: {e}"
 
@@ -2777,15 +3639,15 @@ class ChessClient:
         self.logged_in_user = None
         self.encryption_enabled = False
         self.session_key = None
-        self.pending = b''  # Clear pending buffer
+        self.pending = b''
         if self.sock:
             try:
-                try:
-                    self.sock.shutdown(socket.SHUT_RDWR)
-                except:
-                    pass
+                self.sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
                 self.sock.close()
-            except:
+            except Exception:
                 pass
             self.sock = None
 
@@ -2793,155 +3655,17 @@ class ChessClient:
         """Send a message to the server (encrypted if session established)."""
         if not self.sock:
             return False
-
-        payload = json.dumps({
-            'type': msg_type,
-            'data': data or {}
-        }).encode()
-
-        if self.encryption_enabled and self.session_key and msg_type not in [MSG_GET_SERVER_PUBLIC_KEY, MSG_SESSION_KEY_EXCHANGE]:
+        payload = json.dumps({'type': msg_type, 'data': data or {}}).encode()
+        if (self.encryption_enabled and self.session_key
+                and msg_type not in (MSG_GET_SERVER_PUBLIC_KEY, MSG_SESSION_KEY_EXCHANGE)):
             payload = self._encrypt_message(payload)
-
         header = struct.pack('>I', len(payload))
-        full_message = header + payload
-
         try:
-            self.sock.sendall(full_message)
+            self.sock.sendall(header + payload)
             self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             return True
         except Exception:
             return False
-
-    # ════════════════════════════════════════════════════════════════════
-    #  MESSAGE ROUTING SYSTEM
-    # ════════════════════════════════════════════════════════════════════
-    def __init__(self, host=None, port=None):
-        """Initialize client with message routing."""
-        self.host = host
-        self.port = port
-        self.sock = None
-        self.pending = b''
-        self.logged_in_user = None
-        self.encryption_enabled = False
-        self.session_key = None
-        self.client_private = None
-        self.client_public = None
-
-        # Message routing
-        self._msg_lock = threading.Lock()
-        self._msg_queue = queue.Queue()
-        self._response_handlers = {}  # request_id -> queue
-        self._request_counter = 0
-        
-        # Async message types - initialized in _init_async_types() after constants are defined
-        self.ASYNC_TYPES = set()
-
-        # Start background listener
-        self._listener_stop = threading.Event()
-        self._start_listener()
-    
-    def _init_async_types(self):
-        """Initialize async message types (called after constants are defined)."""
-        if not self.ASYNC_TYPES:  # Only initialize once
-            self.ASYNC_TYPES = {
-                MSG_MATCH, MSG_GAME_MOVE, MSG_GAME_RESIGN,
-                MSG_GAME_DRAW_OFFER, MSG_GAME_DRAW_ACCEPT, MSG_GAME_CHAT,
-                MSG_NEW_MESSAGE_NOTIFY, MSG_FRIEND_REQUEST, MSG_FRIEND_STATUS,
-                MSG_CHALLENGE_SEND
-            }
-    
-    def _start_listener(self):
-        """Start background message listener thread."""
-        # Initialize async types before starting listener
-        self._init_async_types()
-        
-        def listener_loop():
-            while not self._listener_stop.is_set():
-                try:
-                    msg = self._recv_raw(timeout=0.5)
-                    if msg:
-                        msg_type = msg.get('type', '')
-                        with self._msg_lock:
-                            # Route to appropriate handler
-                            if msg_type in self.ASYNC_TYPES:
-                                # Async notification - queue for main loop
-                                self._msg_queue.put(msg)
-                            else:
-                                # Response type - put in main queue for request handlers
-                                self._msg_queue.put(msg)
-                except:
-                    pass
-        
-        self._listener_thread = threading.Thread(target=listener_loop, daemon=True)
-        self._listener_thread.start()
-    
-    def _recv_raw(self, timeout=5.0):
-        """Raw receive - reads from socket and parses message."""
-        if not self.sock:
-            return None
-
-        self.sock.settimeout(timeout)
-        retries = 0
-        max_retries = 3
-
-        while retries < max_retries:
-            try:
-                if len(self.pending) >= 4:
-                    length = struct.unpack('>I', self.pending[:4])[0]
-                    if length > 10_000_000:
-                        self.pending = b''
-                        retries += 1
-                        continue
-                    if len(self.pending) >= 4 + length:
-                        payload = self.pending[4:4 + length]
-                        self.pending = self.pending[4 + length:]
-                        if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
-                            payload = self._decrypt_message(payload)
-                        return json.loads(payload.decode())
-
-                try:
-                    chunk = self.sock.recv(4096)
-                    if not chunk:
-                        return None
-                    self.pending += chunk
-                    continue
-                except socket.timeout:
-                    if len(self.pending) == 0:
-                        retries += 1
-                    continue
-
-            except Exception:
-                retries += 1
-                continue
-
-        return None
-    
-    def recv(self, timeout=5.0):
-        """Receive a message (used by background listener)."""
-        try:
-            return self._msg_queue.get(timeout=timeout)
-        except queue.Empty:
-            return None
-    
-    def recv_sync(self, timeout=10.0):
-        """
-        Receive a synchronous response (for request/response pattern).
-        Waits for a non-async message type.
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                msg = self._msg_queue.get(timeout=0.5)
-                msg_type = msg.get('type', '')
-                # Skip async types, keep waiting for response
-                if msg_type not in self.ASYNC_TYPES:
-                    return msg
-                # Put async messages back? No, they're consumed
-                # Async messages will be missed by main loop, but that's ok
-                # since listener already queued them
-            except queue.Empty:
-                continue
-        return None
 
     def get_server_public_key(self):
         """Get server's public key for E2E encryption."""
@@ -3000,7 +3724,7 @@ class ChessClient:
                 'password': password,
                 'email': email
             })
-        response = self.recv(timeout=10.0)
+        response = self.recv_sync(timeout=10.0)
         return response
 
     def login(self, username, password, use_encryption=True):
@@ -3024,7 +3748,7 @@ class ChessClient:
                 'password': password
             })
         
-        response = self.recv(timeout=10.0)
+        response = self.recv_sync(timeout=10.0)
         
         if response and response.get('success'):
             self.logged_in_user = username
@@ -3041,7 +3765,7 @@ class ChessClient:
                 encrypted_data = encrypt_credentials(credentials, server_public)
                 encrypted_data['encrypted'] = True
                 self.send(MSG_AUTO_LOGIN, encrypted_data)
-                response = self.recv(timeout=10.0)
+                response = self.recv_sync(timeout=10.0)
                 if response and response.get('success'):
                     self.logged_in_user = username
                     self.session_key_exchange()
@@ -3052,7 +3776,7 @@ class ChessClient:
             'username': username,
             'password_hash': password_hash
         })
-        response = self.recv(timeout=10.0)
+        response = self.recv_sync(timeout=10.0)
         if response and response.get('success'):
             self.logged_in_user = username
             self.session_key_exchange()
@@ -3061,27 +3785,32 @@ class ChessClient:
     def logout(self):
         """Logout from the account."""
         self.send(MSG_LOGOUT)
-        response = self.recv(timeout=10.0)
+        response = self.recv_sync(timeout=10.0)
         if response and response.get('success'):
             self.logged_in_user = None
         return response
     
-    def get_profile(self, username=None):
-        """Get a user's profile."""
-        data = {'username': username} if username else {}
-        self.send(MSG_GET_PROFILE, data)
-        return self.recv_sync(timeout=10.0)
-
-    def save_game(self, white, black, result, moves, duration=0, rated=True):
-        """Save a game to history."""
+    def save_game(self, white, black, result, moves, duration=0, rated=True,
+                  pgn='', move_times=None):
+        """Save a game to history. Supports PGN storage and move-time anti-cheat."""
         self.send(MSG_SAVE_GAME, {
             'white': white,
             'black': black,
             'result': result,
             'moves': moves,
             'duration': duration,
-            'rated': rated
+            'rated': rated,
+            'pgn': pgn,
+            'move_times': move_times or [],
         })
+        return self.recv_sync(timeout=10.0)
+
+    def get_profile(self, username=None, page=0, page_size=10):
+        """Get a user's profile with paginated game history."""
+        data = {'page': page, 'page_size': page_size}
+        if username:
+            data['username'] = username
+        self.send(MSG_GET_PROFILE, data)
         return self.recv_sync(timeout=10.0)
 
     def list_users(self):
@@ -3089,10 +3818,13 @@ class ChessClient:
         self.send(MSG_LIST_USERS)
         return self.recv_sync(timeout=10.0)
 
-    # Matchmaking methods
-    def join_queue(self):
-        """Join the matchmaking queue."""
-        self.send(MSG_QUEUE_JOIN, {'username': self.logged_in_user or _current_user})
+    # ── Matchmaking ────────────────────────────────────────────────────
+    def join_queue(self, time_control='blitz'):
+        """Join the matchmaking queue with a specific time control."""
+        self.send(MSG_QUEUE_JOIN, {
+            'username': self.logged_in_user or _current_user,
+            'time_control': time_control,
+        })
         return self.recv_sync(timeout=10.0)
 
     def leave_queue(self):
@@ -3110,43 +3842,105 @@ class ChessClient:
         self.send(MSG_QUEUE_STATUS, {'trigger': True, 'username': self.logged_in_user or _current_user})
         return self.recv_sync(timeout=10.0)
 
+    def reconnect_game(self, game_id):
+        """Attempt to reconnect to an ongoing game after disconnect."""
+        self.send(MSG_RECONNECT, {'game_id': game_id})
+        return self.recv_sync(timeout=10.0)
+
     def send_move(self, game_id, move):
         """Send a move in an active game."""
-        self.send(MSG_GAME_MOVE, {
-            'game_id': game_id,
-            'move': move
-        })
+        self.send(MSG_GAME_MOVE, {'game_id': game_id, 'move': move})
         return self.recv_sync(timeout=10.0)
 
     def resign_game(self, game_id):
-        """Resign from a game."""
-        self.send(MSG_GAME_RESIGN, {
-            'game_id': game_id
-        })
+        self.send(MSG_GAME_RESIGN, {'game_id': game_id})
 
     def offer_draw(self, game_id):
-        """Offer a draw to opponent."""
-        self.send(MSG_GAME_DRAW_OFFER, {
-            'game_id': game_id
-        })
+        self.send(MSG_GAME_DRAW_OFFER, {'game_id': game_id})
 
     def accept_draw(self, game_id):
-        """Accept a draw offer."""
-        self.send(MSG_GAME_DRAW_ACCEPT, {
-            'game_id': game_id
-        })
+        self.send(MSG_GAME_DRAW_ACCEPT, {'game_id': game_id})
 
     def send_chat(self, game_id, message):
-        """Send chat message to opponent."""
-        self.send(MSG_GAME_CHAT, {
-            'game_id': game_id,
-            'message': message
-        })
+        self.send(MSG_GAME_CHAT, {'game_id': game_id, 'message': message})
 
     def get_leaderboard(self, limit=10):
         """Get ELO leaderboard."""
         self.send(MSG_LEADERBOARD, {'limit': limit})
         return self.recv_sync(timeout=10.0)
+
+    # ── Lobby chat ─────────────────────────────────────────────────────
+    def send_lobby_chat(self, message):
+        """Send a message to the global lobby chat."""
+        self.send(MSG_LOBBY_CHAT, {'message': message})
+
+    def get_lobby_chat_history(self, limit=50):
+        """Fetch recent lobby chat messages."""
+        self.send(MSG_LOBBY_CHAT_HISTORY, {'limit': limit})
+        return self.recv_sync(timeout=10.0)
+
+    # ── Daily puzzle ───────────────────────────────────────────────────
+    def get_daily_puzzle(self):
+        """Fetch today's server puzzle."""
+        self.send(MSG_DAILY_PUZZLE)
+        return self.recv_sync(timeout=10.0)
+
+    # ── Achievements ───────────────────────────────────────────────────
+    def get_achievements(self, username=None):
+        """Fetch achievement list for the given user."""
+        self.send(MSG_ACHIEVEMENTS, {'username': username or self.logged_in_user})
+        return self.recv_sync(timeout=10.0)
+
+    # ── Post-game analysis queue ───────────────────────────────────────
+    def request_analysis(self, game_id, moves, pgn='', white='', black=''):
+        """Request server-side analysis for a completed game."""
+        self.send(MSG_ANALYSIS_REQUEST, {
+            'game_id': game_id,
+            'moves': moves,
+            'pgn': pgn,
+            'white': white,
+            'black': black,
+        })
+        return self.recv_sync(timeout=10.0)
+
+    # ── Tournaments ────────────────────────────────────────────────────
+    def create_tournament(self, name, max_players=8, rounds=3, time_control='blitz'):
+        """Create a new Swiss-system tournament."""
+        self.send(MSG_TOURNAMENT_CREATE, {
+            'name': name,
+            'max_players': max_players,
+            'rounds': rounds,
+            'time_control': time_control,
+        })
+        return self.recv_sync(timeout=10.0)
+
+    def join_tournament(self, tournament_id):
+        """Join a tournament by ID."""
+        self.send(MSG_TOURNAMENT_JOIN, {'tournament_id': tournament_id})
+        return self.recv_sync(timeout=10.0)
+
+    def list_tournaments(self):
+        """List all active/upcoming tournaments."""
+        self.send(MSG_TOURNAMENT_LIST)
+        return self.recv_sync(timeout=10.0)
+
+    def get_tournament_status(self, tournament_id):
+        """Get full status of a tournament."""
+        self.send(MSG_TOURNAMENT_STATUS, {'tournament_id': tournament_id})
+        return self.recv_sync(timeout=10.0)
+
+    def record_tournament_result(self, tournament_id, round_num, white, black, result):
+        """Record a game result in a tournament (creator only)."""
+        self.send(MSG_TOURNAMENT_RESULT, {
+            'tournament_id': tournament_id,
+            'round': round_num,
+            'white': white,
+            'black': black,
+            'result': result,
+        })
+        return self.recv_sync(timeout=10.0)
+
+
 
     # ════════════════════════════════════════════════════════════════════
     #  FRIEND SYSTEM METHODS
@@ -3234,6 +4028,45 @@ class ChessClient:
     def cancel_challenge(self, challenged):
         """Cancel a pending challenge."""
         self.send(MSG_CHALLENGE_CANCEL, {'challenged': challenged})
+        return self.recv_sync(timeout=10.0)
+
+    # ── Spectator methods ─────────────────────────────────────────────
+    def list_spectatable_games(self):
+        """List active games available to spectate."""
+        self.send(MSG_SPECTATE_LIST, {})
+        return self.recv_sync(timeout=10.0)
+
+    def spectate_game(self, game_id):
+        """Join a game as a spectator."""
+        self.send(MSG_SPECTATE_JOIN, {'game_id': game_id})
+        return self.recv_sync(timeout=10.0)
+
+    def leave_spectate(self, game_id):
+        """Leave spectator mode."""
+        self.send(MSG_SPECTATE_LEAVE, {'game_id': game_id})
+        return self.recv_sync(timeout=5.0)
+
+    # ── Rematch methods ───────────────────────────────────────────────
+    def request_rematch(self, game_id, white, black):
+        """Request a rematch after a game ends."""
+        self.send(MSG_REMATCH_REQUEST, {'game_id': game_id, 'white': white, 'black': black})
+        return self.recv_sync(timeout=5.0)
+
+    # ── Avatar / Profile methods ──────────────────────────────────────
+    def set_avatar(self, avatar, bio=''):
+        """Set current user's ASCII avatar and bio."""
+        self.send(MSG_SET_AVATAR, {'avatar': avatar, 'bio': bio})
+        return self.recv_sync(timeout=10.0)
+
+    def get_avatar(self, username=None):
+        """Get avatar/profile for a user."""
+        self.send(MSG_GET_AVATAR, {'username': username})
+        return self.recv_sync(timeout=10.0)
+
+    # ── Chat history methods ──────────────────────────────────────────
+    def get_game_chat_history(self, game_id):
+        """Retrieve persistent chat history for a completed game."""
+        self.send(MSG_GAME_CHAT_HISTORY, {'game_id': game_id})
         return self.recv_sync(timeout=10.0)
 
 
@@ -3662,94 +4495,100 @@ def auto_login():
         return False
 
 def view_profile(username=None):
-    """View a user's profile."""
-    if ChessClient is None:
-        print("  Client not available")
-        return
-    
-    # Check offline mode first
+    """View a user's profile with paginated game history."""
     if _offline_mode:
-        print("\n  ╔══════════════════════════════════════════════════════════╗")
-        print("  ║              OFFLINE MODE ACTIVE                         ║")
-        print("  ╠══════════════════════════════════════════════════════════╣")
-        print("  ║  To view profiles, you need to enable online mode:       ║")
-        print("  ║  1. Return to main menu                                  ║")
-        print("  ║  2. Select option 8 (Enable Online Mode)                 ║")
-        print("  ║  3. Make sure the server is running                      ║")
-        print("  ╚══════════════════════════════════════════════════════════╝")
+        print("\n  Profile view requires online mode. Enable it from the main menu.")
         return
-    
-    # Connect to server if not already connected
+
     if _server_client is None or _server_client.sock is None:
         success, msg = connect_to_server()
         if not success:
             print(f"  Cannot connect to server: {msg}")
-            print("  Make sure the server is running: python3 server.py")
             return
 
     if not username:
         username = _current_user
-
     if not username:
-        print("  No user logged in")
+        print("  No user logged in.")
         return
 
-    response = _server_client.get_profile(username)
-    if response is None:
-        print("  No response from server. Connection may have timed out.")
-        print("  Make sure the server is running and you have a stable connection.")
-        return
-    
-    if not response.get('success'):
-        print(f"  Failed to get profile: {response.get('data', 'Unknown error')}")
-        return
+    page = 0
+    page_size = 10
 
-    profile = response.get('data', {})
-    is_own_profile = (username == _current_user)
+    while True:
+        response = _server_client.get_profile(username, page=page, page_size=page_size)
+        if response is None:
+            print("  No response from server.")
+            return
+        if not response.get('success'):
+            print(f"  Failed to get profile: {response.get('data', 'Unknown error')}")
+            return
 
-    # Get ELO info
-    elo = profile.get('elo', 1200)
-    elo_games = profile.get('elo_games', 0)
-    elo_wins = profile.get('elo_wins', 0)
-    elo_losses = profile.get('elo_losses', 0)
-    elo_draws = profile.get('elo_draws', 0)
-    elo_peak = profile.get('elo_peak', 1200)
+        profile = response.get('data', {})
+        is_own  = (username == _current_user)
+        elo      = profile.get('elo', 1200)
+        elo_games = profile.get('elo_games', 0)
+        elo_wins  = profile.get('elo_wins', 0)
+        elo_losses= profile.get('elo_losses', 0)
+        elo_draws = profile.get('elo_draws', 0)
+        elo_peak  = profile.get('elo_peak', 1200)
+        total_g   = profile.get('total_game_count', elo_games)
+        total_pages = max(1, (total_g + page_size - 1) // page_size)
+        susp      = profile.get('suspicious_games', 0)
 
-    print("\n  ╔══════════════════════════════════════════════════════════╗")
-    print(f"  ║  PROFILE: {profile.get('username', 'Unknown'):<44}   ║")
-    print("  ╠══════════════════════════════════════════════════════════╣")
-    if is_own_profile:
-        print(f"  ║  Email: {profile.get('email', 'N/A'):<49}║")
-    print(f"  ║  Member since: {profile.get('created_at', 'N/A'):<41} ║")
-    print("  ╠══════════════════════════════════════════════════════════╣")
-    print(f"  ║  ELO Rating: {elo:<46}║")
-    print(f"  ║  Peak ELO: {elo_peak:<46}║")
-    print(f"  ║  Rated Games: {elo_games:<43}║")
-    print(f"  ║  Record: {elo_wins}W - {elo_losses}L - {elo_draws}D{'':28}║")
-    print("  ╠══════════════════════════════════════════════════════════╣")
-    print("  ║  RECENT GAMES (Last 3):                                  ║")
-    print("  ╚══════════════════════════════════════════════════════════╝")
-    
-    recent_games = profile.get('recent_games', [])
-    if not recent_games:
-        print("    No games played yet.")
-    else:
-        for i, game in enumerate(recent_games, 1):
-            white = game.get('white', 'Unknown')
-            black = game.get('black', 'Unknown')
-            result = game.get('result', 'Unknown')
-            timestamp = game.get('timestamp', 'Unknown')[:16].replace('T', ' ')
-            moves_count = len(game.get('moves', []))
-            
-            if result == 'white':
-                result_str = f"{white} won"
-            elif result == 'black':
-                result_str = f"{black} won"
-            else:
-                result_str = "Draw"
-            
-            print(f"    {i}. [{timestamp}] {white} vs {black} - {result_str} ({moves_count} moves)")
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print(f"  ║  PROFILE: {profile.get('username','?'):<46}║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        if is_own:
+            print(f"  ║  Email        : {profile.get('email','N/A'):<40}║")
+        print(f"  ║  Member since : {str(profile.get('created_at','?'))[:16]:<40}║")
+        print(f"  ║  Banned       : {'Yes ⛔' if profile.get('banned') else 'No':<40}║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print(f"  ║  ELO Rating   : {elo:<40}║")
+        print(f"  ║  Peak ELO     : {elo_peak:<40}║")
+        print(f"  ║  Rated Games  : {elo_games:<40}║")
+        print(f"  ║  Record       : {elo_wins}W / {elo_losses}L / {elo_draws}D{'':<26}║")
+        if is_own and susp:
+            print(f"  ║  ⚠  Flagged games (anti-cheat): {susp:<25}║")
+        print(f"  ╠══════════════════════════════════════════════════════════╣")
+        print(f"  ║  GAME HISTORY  (page {page+1}/{total_pages}, {page_size} per page){'':<18}║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+
+        recent_games = profile.get('recent_games', [])
+        if not recent_games:
+            print("    No games on this page.")
+        else:
+            for i, game in enumerate(recent_games, page * page_size + 1):
+                white   = game.get('white', '?')
+                black   = game.get('black', '?')
+                result  = game.get('result', '?')
+                ts      = str(game.get('timestamp', '?'))[:16].replace('T', ' ')
+                n_moves = len(game.get('moves', []))
+                res_str = (f"{white} won" if result == 'white'
+                           else f"{black} won" if result == 'black'
+                           else "Draw")
+                pgn_flag = ' [PGN]' if game.get('pgn') else ''
+                print(f"    {i:>3}. [{ts}] {white} vs {black} — {res_str} ({n_moves} moves){pgn_flag}")
+
+        print()
+        if total_pages <= 1:
+            break
+        print(f"  Page {page+1}/{total_pages} — [n]ext  [p]rev  [q]uit")
+        try:
+            nav = input("  > ").strip().lower()
+        except EOFError:
+            break
+        if nav in ('q', 'quit', ''):
+            break
+        elif nav in ('n', 'next') and page < total_pages - 1:
+            page += 1
+        elif nav in ('p', 'prev', 'b') and page > 0:
+            page -= 1
+        else:
+            break
     print()
+
+
 
 def list_all_users():
     """List all registered users."""
@@ -3822,55 +4661,53 @@ def list_all_users():
 #  FRIENDS & MESSAGING SYSTEM
 # ════════════════════════════════════════════════════════════════════════
 
-# In-memory storage for E2E encryption keys
-_user_private_keys = {}
-_user_public_keys = {}
+# ── Message encryption ────────────────────────────────────────────────────
+# We use AES-256-CTR for friend messages.  Each client generates a fresh
+# 32-byte message key once per session; the same stdlib AES-CTR used for
+# the session transport is reused here (no extra dependencies).
+# A random 12-byte nonce is prepended to every ciphertext so the same key
+# can safely encrypt many messages.
+# The "iv" field sent to the server carries the base64-encoded nonce.
+# The "tag" field is left as "aes256ctr" (no HMAC — acceptable because the
+# server transport already provides channel integrity via AES-GCM).
+
+_message_key: bytes = secrets.token_bytes(32)   # session-local symmetric key
+
+def _msg_encrypt(plaintext: str) -> tuple:
+    """Encrypt a chat message.  Returns (ciphertext_b64, nonce_b64, tag_str)."""
+    nonce = secrets.token_bytes(12)
+    pt    = plaintext.encode("utf-8")
+    ct    = _aes_ctr_encrypt(pt, _message_key, nonce)
+    return (base64.b64encode(ct).decode(),
+            base64.b64encode(nonce).decode(),
+            "aes256ctr")
+
+def _msg_decrypt(ciphertext_b64: str, nonce_b64: str) -> str:
+    """Decrypt a chat message stored on the server."""
+    ct    = base64.b64decode(ciphertext_b64)
+    nonce = base64.b64decode(nonce_b64)
+    pt    = _aes_ctr_decrypt(ct, _message_key, nonce)
+    return pt.decode("utf-8")
+
+# Legacy stubs kept so old call-sites that reference them don't crash
+_user_private_keys: dict = {}
+_user_public_keys:  dict = {}
 
 def _generate_keypair():
-    """Generate a simple keypair for E2E encryption (simplified for demonstration)."""
-    # In a real implementation, use proper cryptographic libraries
-    # This is a simplified version for demonstration
-    import hashlib
-    import secrets
-    
-    # Generate a random private key
-    private_key = secrets.token_hex(32)
-    # Generate a public key (simplified - in reality would use DH or RSA)
-    public_key = hashlib.sha256(private_key.encode()).hexdigest()
-    
-    return private_key, public_key
+    """Return a placeholder keypair (messaging now uses _msg_encrypt)."""
+    priv = secrets.token_hex(32)
+    return priv, priv   # pub == priv is fine; key is never used externally
 
-def _encrypt_message(message, recipient_public_key):
-    """Encrypt a message for a recipient (simplified)."""
-    # In a real implementation, use proper AES-GCM encryption
-    # This is a simplified version for demonstration
-    import base64
-    import hashlib
-    import os
-    
-    # Generate a random IV and key
-    iv = os.urandom(12)
-    key = hashlib.sha256(recipient_public_key.encode()).digest()
-    
-    # Simple XOR encryption (NOT secure - for demonstration only)
-    # In production, use cryptography library with AES-GCM
-    message_bytes = message.encode()
-    encrypted = bytes(a ^ b for a, b in zip(message_bytes, (key * ((len(message_bytes) // 32) + 1))[:len(message_bytes)]))
-    
-    return base64.b64encode(encrypted).decode(), base64.b64encode(iv).decode(), "demo_tag"
+def _encrypt_message(message, _key=""):
+    """Wrapper around _msg_encrypt for call-site compatibility."""
+    return _msg_encrypt(message)
 
-def _decrypt_message(encrypted_content, iv, tag, sender_public_key):
-    """Decrypt a message from a sender (simplified)."""
-    import base64
-    import hashlib
-    
-    key = hashlib.sha256(sender_public_key.encode()).digest()
-    encrypted_bytes = base64.b64decode(encrypted_content)
-    
-    # Simple XOR decryption (NOT secure - for demonstration only)
-    decrypted = bytes(a ^ b for a, b in zip(encrypted_bytes, (key * ((len(encrypted_bytes) // 32) + 1))[:len(encrypted_bytes)]))
-    
-    return decrypted.decode()
+def _decrypt_message(encrypted_content, iv, tag, _key=""):
+    """Wrapper around _msg_decrypt for call-site compatibility."""
+    try:
+        return _msg_decrypt(encrypted_content, iv)
+    except Exception:
+        return "[decryption error]"
 
 def friends_messaging_menu():
     """Main menu for friends and messaging."""
@@ -4239,19 +5076,23 @@ def open_chat_with_friend(friend_name):
     if _server_client and _server_client.sock:
         try:
             _server_client.send(MSG_GET_MESSAGES, {'friend': friend_name, 'since_id': 0})
-            response = _server_client.recv(timeout=2.0)  # Short timeout
+            response = _server_client.recv(timeout=3.0)
             if response and response.get('success'):
                 messages = response.get('data', {}).get('messages', [])
-        except:
+        except Exception:
             pass  # Non-critical, continue without loading messages
 
-    # Display messages if we got any
+    # Display messages — decrypt each one before showing
     if messages:
         print("\n  Recent messages:")
         for msg in messages[-20:]:  # Show last 20 messages
             sender = msg['sender']
-            content = msg['encrypted_content'][:50] + "..." if len(msg['encrypted_content']) > 50 else msg['encrypted_content']
-            print(f"    [{sender}] {content}")
+            try:
+                text = _msg_decrypt(msg['encrypted_content'], msg.get('iv', ''))
+            except Exception:
+                text = "[unable to decrypt — sent from another session]"
+            ts = msg.get('created_at', '')[:16].replace('T', ' ')
+            print(f"    [{ts}] {sender}: {text}")
         print()
     else:
         print("\n  No recent messages. Start the conversation!\n")
@@ -4269,11 +5110,7 @@ def open_chat_with_friend(friend_name):
             continue
 
         # Encrypt and send message
-        if friend_name in _user_public_keys:
-            encrypted, iv, tag = _encrypt_message(message, _user_public_keys[friend_name])
-        else:
-            encrypted, iv, tag = _encrypt_message(message, "demo_key")
-
+        encrypted, iv, tag = _msg_encrypt(message)
         response = _server_client.send_message(friend_name, encrypted, iv, tag)
 
         # Handle response from server
@@ -4618,21 +5455,249 @@ def auth_menu():
 # ════════════════════════════════════════════════════════════════════════
 #  ONLINE MATCHMAKING
 # ════════════════════════════════════════════════════════════════════════
+def spectator_mode():
+    """Watch a live online game as a spectator."""
+    if _offline_mode or not _server_client:
+        print("\n  Spectator mode requires online connection.")
+        return
+    
+    # List active games
+    resp = _server_client.list_spectatable_games()
+    if resp is None or not resp.get('success'):
+        print("\n  Could not retrieve active games.")
+        return
+    
+    games = resp.get('data', [])
+    if not games:
+        print("\n  No active games to spectate right now.")
+        return
+    
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║               LIVE GAMES — SPECTATE                     ║")
+    print("  ╠══╦══════════════════════╦══════════════════════╦════════╣")
+    print("  ║# ║ White                ║ Black                ║ Moves  ║")
+    print("  ╠══╬══════════════════════╬══════════════════════╬════════╣")
+    for i, g in enumerate(games, 1):
+        w = g.get('white', '?')[:20]
+        b = g.get('black', '?')[:20]
+        mv = g.get('move_count', 0)
+        spec = g.get('spectator_count', 0)
+        print(f"  ║{i:<2}║ {w:<20} ║ {b:<20} ║ {mv:>3}m {spec:>2}👁 ║")
+    print("  ║ 0. Back                                                  ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+    
+    try:
+        choice = input("  Select game to spectate: ").strip()
+    except EOFError:
+        return
+    
+    if choice == '0':
+        return
+    
+    try:
+        idx = int(choice) - 1
+        if not (0 <= idx < len(games)):
+            print("  Invalid choice.")
+            return
+    except ValueError:
+        print("  Invalid choice.")
+        return
+    
+    target = games[idx]
+    game_id = target['game_id']
+    
+    resp = _server_client.spectate_game(game_id)
+    if resp is None or not resp.get('success'):
+        print(f"  Could not join as spectator: {resp.get('data', 'unknown error') if resp else 'no response'}")
+        return
+    
+    print(f"\n  Now spectating: {target['white']} vs {target['black']}")
+    print("  (Press Enter to refresh, type 'quit' to exit spectator mode)\n")
+    
+    # Set up local board from move log provided in SPECTATE_UPDATE
+    board = Board()
+    board.reset()
+    last_mv = None
+    
+    # Process initial state from the queue (SPECTATE_UPDATE was queued by listener)
+    timeout = time.time() + 3
+    while time.time() < timeout:
+        try:
+            msg = _server_client._async_queue.get(timeout=0.3)
+            if msg.get('type') == MSG_SPECTATE_UPDATE:
+                d = msg.get('data', {})
+                for san in d.get('move_log', []):
+                    m = board.parse_san(san)
+                    if m:
+                        board.make(m)
+                        board.san_log.append(san)
+                        last_mv = m
+                break
+        except:
+            break
+    
+    white_remaining = 0
+    black_remaining = 0
+    clock_enabled = False
+    
+    while True:
+        # Drain message queue
+        try:
+            while not _server_client._async_queue.empty():
+                msg = _server_client._async_queue.get_nowait()
+                mt = msg.get('type', '')
+                d = msg.get('data', {})
+                if mt == MSG_GAME_MOVE:
+                    san = d.get('move')
+                    m = board.parse_san(san)
+                    if m:
+                        board.make(m)
+                        board.san_log.append(san)
+                        last_mv = m
+                        print(f"  ♟ {d.get('from_player')} plays: {san}")
+                elif mt == MSG_GAME_CLOCK_UPDATE:
+                    white_remaining = d.get('white_remaining', 0)
+                    black_remaining = d.get('black_remaining', 0)
+                    clock_enabled = True
+                elif mt == MSG_GAME_CHAT:
+                    print(f"  💬 [{d.get('from_player')}]: {d.get('message')}")
+                elif mt in (MSG_GAME_RESIGN, MSG_GAME_DRAW_ACCEPT, MSG_GAME_TIMEOUT):
+                    print(f"\n  Game ended! {mt}")
+                    _server_client.leave_spectate(game_id)
+                    return
+        except:
+            pass
+        
+        draw_board(board, WHITE, last_mv)
+        if _settings.get('show_eval_bar', False):
+            _ev = evaluate(board)
+            if board.side == BLACK: _ev = -_ev
+            print(_eval_bar(_ev))
+        turn_str = "White" if board.side == WHITE else "Black"
+        print(f"  Spectating: {target['white']} vs {target['black']}")
+        if clock_enabled:
+            print(f"  ⏱ White: {_fmt_online_clock(white_remaining)}  |  Black: {_fmt_online_clock(black_remaining)}")
+        print(f"  Move {board.fullmove} — {turn_str} to move")
+        
+        try:
+            raw = input("  [Enter=refresh, quit=exit]: ").strip().lower()
+        except EOFError:
+            break
+        
+        if raw == 'quit':
+            break
+    
+    _server_client.leave_spectate(game_id)
+    print("  Left spectator mode.")
+
+
+def player_profile_menu():
+    """View and edit player profile with avatar."""
+    if _offline_mode or not _server_client or not _current_user:
+        print("\n  Profile management requires online connection and login.")
+        return
+    
+    while True:
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║                  PLAYER PROFILE                          ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  1. View my profile                                       ║")
+        print("  ║  2. Edit avatar / bio                                     ║")
+        print("  ║  3. View another player's profile                         ║")
+        print("  ║  0. Back                                                  ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+        
+        try:
+            choice = input("  Choice: ").strip()
+        except EOFError:
+            return
+        
+        if choice == '0':
+            return
+        
+        elif choice == '1':
+            _show_player_profile(_current_user)
+        
+        elif choice == '2':
+            print("\n  Current avatar (leave blank to keep existing):")
+            print("  Enter up to 5 lines of ASCII art (type END on a blank line to finish):")
+            lines = []
+            for _ in range(5):
+                try:
+                    line = input("  > ")
+                except EOFError:
+                    break
+                if line.strip().upper() == 'END':
+                    break
+                lines.append(line)
+            avatar = '\n'.join(lines)
+            
+            try:
+                bio = input("  Bio (max 200 chars): ").strip()[:200]
+            except EOFError:
+                bio = ''
+            
+            resp = _server_client.set_avatar(avatar, bio)
+            if resp and resp.get('success'):
+                print("  ✓ Profile updated!")
+            else:
+                print(f"  Failed: {resp.get('data', 'unknown') if resp else 'no response'}")
+        
+        elif choice == '3':
+            try:
+                username = input("  Enter username: ").strip()
+            except EOFError:
+                continue
+            if username:
+                _show_player_profile(username)
+
+
+def _show_player_profile(username):
+    """Display a player's profile with avatar, stats, rating."""
+    resp = _server_client.get_avatar(username)
+    if resp is None or not resp.get('success'):
+        print(f"  Could not load profile for {username}.")
+        return
+    
+    data = resp.get('data', {})
+    avatar = data.get('avatar', '')
+    bio = data.get('bio', '')
+    elo = data.get('elo', 1200)
+    games = data.get('games', 0)
+    wins = data.get('wins', 0)
+    losses = data.get('losses', 0)
+    draws = data.get('draws', 0)
+    is_prov = data.get('is_provisional', games < 20)
+    peak = data.get('elo_peak', elo)
+    
+    prov_str = ' [Provisional]' if is_prov else ''
+    
+    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║  👤 {username:<52}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    if avatar:
+        for line in avatar.split('\n')[:5]:
+            print(f"  ║  {line:<54}║")
+        print(f"  ╠══════════════════════════════════════════════════════════╣")
+    if bio:
+        print(f"  ║  {bio[:54]:<54}║")
+        print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  ELO: {elo}{prov_str:<48}║")
+    print(f"  ║  Peak ELO: {peak:<46}║")
+    print(f"  ║  Record: {wins}W / {draws}D / {losses}L ({games} rated games){'':<20}║")
+    print(f"  ╚══════════════════════════════════════════════════════════╝")
+
+
 def matchmaking_menu():
     """Display matchmaking menu for online games."""
     global _server_client, _current_user
 
-    # Check offline mode
     if _offline_mode:
         print("\n  ╔══════════════════════════════════════════════════════════╗")
         print("  ║              OFFLINE MODE ACTIVE                         ║")
         print("  ╠══════════════════════════════════════════════════════════╣")
         print("  ║  Online matchmaking requires internet connection.        ║")
-        print("  ║                                                          ║")
-        print("  ║  To enable online features:                              ║")
-        print("  ║  1. Return to main menu                                  ║")
-        print("  ║  2. Select option 8 (Toggle Offline Mode)                ║")
-        print("  ║  3. Configure server connection if needed                ║")
+        print("  ║  Return to main menu → Enable Online Mode to proceed.   ║")
         print("  ╚══════════════════════════════════════════════════════════╝")
         return
 
@@ -4641,161 +5706,353 @@ def matchmaking_menu():
         print("  Please login or register from Account Management.")
         return
 
-    # Check if already connected, if not connect
+    # Ensure we have a live connection
     if _server_client is None or _server_client.sock is None:
         success, msg = connect_to_server()
         if not success:
             print(f"\n  Cannot connect to server: {msg}")
-            print("  Make sure the server is running (python3 server.py)")
             return
     else:
-        # Connection exists, verify it's still alive with a ping
         _server_client.send(MSG_PING)
-        ping_resp = _server_client.recv(timeout=2.0)
-        if ping_resp is None or not ping_resp.get('success'):
-            # Connection lost, reconnect
+        ping_resp = _server_client.recv_sync(timeout=2.0)
+        if ping_resp is None:
             print("\n  Connection lost. Reconnecting...")
             success, msg = connect_to_server(reconnect=True)
             if not success:
-                print(f"\n  Cannot reconnect to server: {msg}")
-                print("  Make sure the server is running (python3 server.py)")
+                print(f"\n  Cannot reconnect: {msg}")
                 return
-            
-            # After reconnect, we need to re-login
-            # For now, inform the user
-            print("\n  Session expired. Please log in again.")
-            print("  Return to main menu and go to Account Management to log in.")
-            return
 
     in_queue = False
-    in_game = False
     current_game_id = None
     my_color = None
     opponent_name = None
     last_refresh = time.time()
-    refresh_interval = 5.0  # Auto-refresh every 5 seconds
+    refresh_interval = 5.0
+    selected_tc = 'blitz'          # default time control
 
     print("\n  ╔══════════════════════════════════════════════════════════╗")
-    print("  ║              ONLINE MATCHMAKING                          ║")
+    print("  ║              ONLINE MATCHMAKING  v2.0                   ║")
     print("  ╠══════════════════════════════════════════════════════════╣")
-    print("  ║  Find a random opponent for a rated game!                ║")
+    print("  ║  Find a rated game using ELO-banded matchmaking!        ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
 
-    # Message listener is already running in _server_client
-    # Use its message queue for async notifications
-
-    # Start keep-alive ping thread to maintain connection
-    def keep_alive():
+    # Keep-alive ping thread
+    def _keep_alive():
         while not _server_client._listener_stop.is_set():
-            time.sleep(10)  # Ping every 10 seconds
+            time.sleep(10)
             try:
                 _server_client.send(MSG_PING)
-            except:
+            except Exception:
                 pass
 
-    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-    keep_alive_thread.start()
+    threading.Thread(target=_keep_alive, daemon=True).start()
 
     while True:
-        # Process any pending messages from centralized queue
+        # ── Drain async queue and handle push notifications ────────────
         try:
-            while not _server_client._msg_queue.empty():
-                msg = _server_client._msg_queue.get_nowait()
+            while not _server_client._async_queue.empty():
+                msg = _server_client._async_queue.get_nowait()
                 msg_type = msg.get('type', '')
                 data = msg.get('data', {})
 
                 if msg_type == MSG_MATCH:
-                    # Match found!
-                    in_game = True
                     in_queue = False
                     current_game_id = data.get('game_id')
                     my_color = data.get('color')
                     opponent_name = data.get('opponent')
-                    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
-                    print(f"  ║  MATCH FOUND!                                              ║")
-                    print(f"  ╠══════════════════════════════════════════════════════════╣")
-                    print(f"  ║  Opponent: {opponent_name:<46}║")
-                    print(f"  ║  Your Color: {my_color.upper():<44}║")
-                    print(f"  ║  Game ID: {current_game_id:<47}║")
-                    print(f"  ╚══════════════════════════════════════════════════════════╝")
-                    print("\n  Starting game...")
+                    tc_info = data.get('time_control', selected_tc)
+                    print(f"\n  ╔══════════════════════════════════════════════════╗")
+                    print(f"  ║  ♟  MATCH FOUND!                                  ║")
+                    print(f"  ╠══════════════════════════════════════════════════╣")
+                    print(f"  ║  Opponent    : {opponent_name:<33}║")
+                    print(f"  ║  Your color  : {my_color.upper():<33}║")
+                    print(f"  ║  Time control: {tc_info:<33}║")
+                    print(f"  ║  Game ID     : {str(current_game_id):<33}║")
+                    print(f"  ╚══════════════════════════════════════════════════╝")
+                    print("\n  Starting game in 1 second...")
                     time.sleep(1)
-                    # Start the online game
-                    play_online_matched_game(current_game_id, my_color, opponent_name, msg_queue, stop_listener)
-                    in_game = False
+                    play_online_matched_game(
+                        current_game_id, my_color, opponent_name,
+                        _server_client._async_queue,
+                        _server_client._listener_stop
+                    )
                     current_game_id = None
-                    break
-                
-                elif msg_type == MSG_GAME_MOVE:
-                    # Opponent's move received - will be handled in game loop
-                    msg_queue.put(msg)
-                
-                elif msg_type == MSG_GAME_RESIGN:
-                    winner = data.get('winner')
-                    resigned_by = data.get('resigned_by')
-                    print(f"\n  {resigned_by} resigned. {winner} wins!")
-                    in_game = False
-                
-                elif msg_type == MSG_GAME_DRAW_OFFER:
-                    offered_by = data.get('offered_by')
-                    print(f"\n  {offered_by} offers a draw.")
-                    try:
-                        ans = input("  Accept draw? [y/N]: ").strip().lower()
-                    except EOFError:
-                        ans = 'n'
-                    if ans in ('y', 'yes'):
-                        _server_client.accept_draw(current_game_id)
-                        print("  Game ended in a draw.")
-                        in_game = False
-                    else:
-                        print("  Draw offer declined.")
-                
-                elif msg_type == MSG_GAME_DRAW_ACCEPT:
-                    print(f"\n  Draw accepted! Game ended in a draw.")
-                    in_game = False
-                
-                elif msg_type == MSG_GAME_CHAT:
-                    from_player = data.get('from_player')
-                    message = data.get('message')
-                    print(f"\n  [{from_player}]: {message}")
-        except:
-            pass
-        
-        if in_game:
-            continue
+                    my_color = None
+                    opponent_name = None
 
-        # Auto-refresh queue status every 5 seconds when in queue
-        current_time = time.time()
-        if in_queue and current_time - last_refresh >= refresh_interval:
+                elif msg_type == MSG_ACHIEVEMENT_UNLOCKED:
+                    name = data.get('name', data.get('id', '?'))
+                    desc = data.get('desc', '')
+                    print(f"\n  🏆  Achievement unlocked: {name}")
+                    if desc:
+                        print(f"       {desc}")
+
+                elif msg_type == MSG_SERVER_BROADCAST:
+                    print(f"\n  📢  {data.get('message', '')}")
+
+                elif msg_type == MSG_FRIEND_HEARTBEAT:
+                    # Silent status update; show nothing unless user requests
+                    pass
+
+        except Exception:
+            pass
+
+        # Auto-refresh queue status
+        if in_queue and time.time() - last_refresh >= refresh_interval:
             status_resp = _server_client.get_queue_status()
             if status_resp and status_resp.get('success'):
-                status = status_resp.get('data', {})
-                position = status.get('position', '?')
-                wait_time = status.get('wait_time', 0)
-                queued = status.get('queued_players', 0)
-                print(f"\n  [Auto-refresh] Position: {position} | Waiting: {wait_time}s | Players: {queued}")
-            last_refresh = current_time
+                st = status_resp.get('data', {})
+                pos  = st.get('position', '?')
+                wait = st.get('wait_time', 0)
+                cnt  = st.get('queued_players', 0)
+                print(f"\n  [Queue] Position: {pos} | Wait: {wait}s | Players seeking: {cnt}")
+            last_refresh = time.time()
 
+        # ── Menu ───────────────────────────────────────────────────────
+        tc_label = {'bullet': '⚡ Bullet 1+0', 'blitz': '🔥 Blitz 5+0',
+                    'rapid': '⏱  Rapid 10+0', 'classical': '♟  Classical 30+0'}.get(selected_tc, selected_tc)
         print("\n  ╔══════════════════════════════════════════════════════════╗")
         if in_queue:
-            print("  ║  Status: IN QUEUE - Waiting for opponent...            ║")
-            # Get queue status
-            status_resp = _server_client.get_queue_status()
-            if status_resp and status_resp.get('success'):
-                status = status_resp.get('data', {})
-                position = status.get('position', '?')
-                wait_time = status.get('wait_time', 0)
-                queued = status.get('queued_players', 0)
-                print(f"  ║  Position: {position} | Waiting: {wait_time}s | Players: {queued}          ║")
+            print(f"  ║  Status: ⏳ IN QUEUE [{selected_tc.upper()}] — waiting for match...  ║")
         else:
-            print("  ║  Status: NOT IN QUEUE                                    ║")
+            print(f"  ║  Status: NOT IN QUEUE  │  TC: {tc_label:<26}║")
         print("  ╠══════════════════════════════════════════════════════════╣")
         if not in_queue:
-            print("  ║  1. Join Queue - Find a game                             ║")
+            print("  ║  1. Join Queue (rated game)                              ║")
+            print("  ║  T. Change Time Control                                  ║")
         else:
             print("  ║  2. Leave Queue                                          ║")
-            print("  ║  3. Refresh - Check for opponents                        ║")
+            print("  ║  3. Refresh queue status                                 ║")
+        print("  ║  4. Challenge by Username                                ║")
+        print("  ║  5. Watch Live Games (Spectate)                          ║")
+        print("  ║  6. Tournaments                                           ║")
+        print("  ║  7. Lobby Chat                                            ║")
+        print("  ║  8. My Achievements                                       ║")
+        print("  ║  9. View / Edit Profile & Avatar                         ║")
         print("  ║  0. Back to Main Menu                                    ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+
+        try:
+            choice = input("  Choice: ").strip().lower()
+        except EOFError:
+            break
+
+        if choice == '0':
+            if in_queue:
+                _server_client.leave_queue()
+            break
+
+        elif choice == '1' and not in_queue:
+            resp = _server_client.join_queue(time_control=selected_tc)
+            if resp and resp.get('success'):
+                in_queue = True
+                last_refresh = time.time()
+                print(f"  ✓ Joined {selected_tc} queue. Waiting for opponent (ELO ±150)...")
+            else:
+                print(f"  ✗ Failed: {resp.get('data','Unknown error') if resp else 'No response'}")
+
+        elif choice == 't' and not in_queue:
+            print("  Time controls:")
+            print("    1. Bullet   (1+0)")
+            print("    2. Blitz    (5+0)  ← default")
+            print("    3. Rapid    (10+0)")
+            print("    4. Classical(30+0)")
+            try:
+                tc_choice = input("  Select [1-4]: ").strip()
+            except EOFError:
+                continue
+            selected_tc = {'1': 'bullet', '2': 'blitz', '3': 'rapid', '4': 'classical'}.get(tc_choice, selected_tc)
+            print(f"  ✓ Time control set to: {selected_tc}")
+
+        elif choice == '2' and in_queue:
+            _server_client.leave_queue()
+            in_queue = False
+            print("  ✓ Left queue.")
+
+        elif choice == '3' and in_queue:
+            resp = _server_client.get_queue_status()
+            if resp and resp.get('success'):
+                st = resp.get('data', {})
+                print(f"  Position: {st.get('position','?')} | Wait: {st.get('wait_time',0)}s | Players: {st.get('queued_players',0)}")
+            last_refresh = time.time()
+
+        elif choice == '4':
+            try:
+                target = input("  Enter username to challenge: ").strip()
+            except EOFError:
+                continue
+            if not target:
+                continue
+            print("  Color preference: 1. Random  2. White  3. Black")
+            try:
+                cc = input("  Choice [1]: ").strip() or '1'
+            except EOFError:
+                continue
+            color = {'1': 'random', '2': 'white', '3': 'black'}.get(cc, 'random')
+            resp = _server_client.send_challenge(target, color, rated=True)
+            if resp and resp.get('success'):
+                print(f"  ✓ Challenge sent to {target}!")
+            else:
+                print(f"  ✗ Could not challenge: {resp.get('data','Unknown error') if resp else 'No response'}")
+
+        elif choice == '5':
+            spectator_mode()
+
+        elif choice == '6':
+            tournaments_menu()
+
+        elif choice == '7':
+            lobby_chat_menu()
+
+        elif choice == '8':
+            achievements_menu()
+
+        elif choice == '9':
+            player_profile_menu()
+
+
+
+
+def _fmt_online_clock(seconds):
+    """Format seconds into M:SS for online clock display."""
+    if seconds < 0:
+        seconds = 0
+    m = int(seconds) // 60
+    s = int(seconds) % 60
+    return f"{m}:{s:02d}"
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  LOBBY CHAT
+# ════════════════════════════════════════════════════════════════════════
+def lobby_chat_menu():
+    """Global pre-game lobby chat."""
+    global _server_client, _current_user
+    if _offline_mode or not _current_user or not _server_client:
+        print("\n  Lobby chat requires an online connection and login.")
+        return
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║                    LOBBY CHAT                            ║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  Type a message and press Enter to send.                 ║")
+    print("  ║  Press Enter on empty line to return to menu.            ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+
+    # Load history
+    resp = _server_client.get_lobby_chat_history(limit=30)
+    if resp and resp.get('success'):
+        messages = resp.get('data', {}).get('messages', [])
+        if messages:
+            print("  ── Recent messages ─────────────────────────────────────")
+            for m in messages:
+                sender = m.get('sender', '?')
+                text   = m.get('message', '')
+                ts     = m.get('timestamp', '')[:16] if m.get('timestamp') else ''
+                print(f"  [{ts}] {sender}: {text}")
+            print("  ─────────────────────────────────────────────────────────")
+        else:
+            print("  (No messages yet — be the first!)")
+
+    while True:
+        # Drain async queue for new lobby messages
+        try:
+            while not _server_client._async_queue.empty():
+                msg = _server_client._async_queue.get_nowait()
+                if msg.get('type') == MSG_LOBBY_CHAT:
+                    d = msg.get('data', {})
+                    print(f"  {d.get('sender','?')}: {d.get('message','')}")
+                elif msg.get('type') == MSG_SERVER_BROADCAST:
+                    print(f"  📢 {msg.get('data',{}).get('message','')}")
+                elif msg.get('type') == MSG_ACHIEVEMENT_UNLOCKED:
+                    d = msg.get('data', {})
+                    print(f"  🏆 Achievement unlocked: {d.get('name', d.get('id','?'))}")
+        except Exception:
+            pass
+
+        try:
+            text = input(f"  {_current_user}: ").strip()
+        except EOFError:
+            break
+        if not text:
+            break
+        _server_client.send_lobby_chat(text)
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  ACHIEVEMENTS
+# ════════════════════════════════════════════════════════════════════════
+def achievements_menu():
+    """Show the current user's achievements."""
+    global _server_client, _current_user
+    if _offline_mode or not _current_user or not _server_client:
+        print("\n  Achievements require an online connection and login.")
+        return
+
+    resp = _server_client.get_achievements()
+    if not resp or not resp.get('success'):
+        print(f"\n  Could not load achievements: {resp.get('data','No response') if resp else 'No response'}")
+        return
+
+    data = resp.get('data', {})
+    unlocked = {a['id'] for a in data.get('unlocked', [])}
+    all_achievements = data.get('all', [])
+
+    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║  🏆  ACHIEVEMENTS  —  {_current_user:<36}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    for ach in all_achievements:
+        aid  = ach.get('id', '?')
+        name = ach.get('name', aid)
+        desc = ach.get('desc', '')
+        done = aid in unlocked
+        icon = '✅' if done else '🔒'
+        print(f"  ║  {icon} {name:<30} {desc[:20]:<20}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  Unlocked: {len(unlocked)}/{len(all_achievements):<46}║")
+    print(f"  ╚══════════════════════════════════════════════════════════╝")
+    try:
+        input("  Press Enter to continue...")
+    except EOFError:
+        pass
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  TOURNAMENTS
+# ════════════════════════════════════════════════════════════════════════
+def tournaments_menu():
+    """Browse, create, and join Swiss-system tournaments."""
+    global _server_client, _current_user
+    if _offline_mode or not _current_user or not _server_client:
+        print("\n  Tournaments require an online connection and login.")
+        return
+
+    while True:
+        # List tournaments
+        resp = _server_client.list_tournaments()
+        ts = resp.get('data', {}).get('tournaments', []) if resp and resp.get('success') else []
+
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║                    TOURNAMENTS                           ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        if ts:
+            for t in ts[:10]:
+                status  = t.get('status', '?')
+                name    = t.get('name', '?')[:28]
+                players = len(t.get('players', []))
+                maxp    = t.get('max_players', '?')
+                rnd     = t.get('current_round', 0)
+                rounds  = t.get('rounds', '?')
+                tid     = t.get('id', '?')
+                print(f"  ║  [{tid[:6]}] {name:<28} {status:<12}║")
+                print(f"  ║           Players: {players}/{maxp}  Round: {rnd}/{rounds}{'':22}║")
+        else:
+            print("  ║  No active tournaments. Be the first to create one!     ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  1. Create tournament                                     ║")
+        print("  ║  2. Join tournament                                       ║")
+        print("  ║  3. View tournament details                               ║")
+        print("  ║  0. Back                                                  ║")
         print("  ╚══════════════════════════════════════════════════════════╝")
 
         try:
@@ -4804,47 +6061,395 @@ def matchmaking_menu():
             break
 
         if choice == '0':
-            if in_queue:
-                _server_client.leave_queue()
             break
-        elif choice == '1' and not in_queue:
-            resp = _server_client.join_queue()
+
+        elif choice == '1':
+            try:
+                name   = input("  Tournament name: ").strip() or 'Open Tournament'
+                maxp   = int(input("  Max players [8]: ").strip() or '8')
+                rounds = int(input("  Rounds [3]: ").strip() or '3')
+                print("  Time control: 1.Bullet  2.Blitz  3.Rapid  4.Classical")
+                tc_map = {'1': 'bullet', '2': 'blitz', '3': 'rapid', '4': 'classical'}
+                tc = tc_map.get(input("  Choice [2]: ").strip() or '2', 'blitz')
+            except (EOFError, ValueError):
+                continue
+            resp = _server_client.create_tournament(name, maxp, rounds, tc)
             if resp and resp.get('success'):
-                in_queue = True
-                last_refresh = time.time()  # Reset auto-refresh timer
-                print(f"  {resp.get('data', 'Joined queue')}")
+                tid = resp.get('data', {}).get('tournament_id', '?')
+                print(f"  ✓ Tournament '{name}' created! ID: {tid}")
             else:
-                error_msg = resp.get('data', 'Unknown error') if resp else 'Connection timeout'
-                print(f"  Failed to join queue: {error_msg}")
-        elif choice == '2' and in_queue:
-            _server_client.leave_queue()
-            in_queue = False
-            print("  Left queue.")
-        elif choice == '3' and in_queue:
-            # Refresh: trigger matchmaking check
-            print("  Checking for available opponents...")
-            resp = _server_client.trigger_matchmaking()
+                print(f"  ✗ Failed: {resp.get('data','error') if resp else 'no response'}")
+
+        elif choice == '2':
+            try:
+                tid = input("  Tournament ID: ").strip()
+            except EOFError:
+                continue
+            if not tid:
+                continue
+            resp = _server_client.join_tournament(tid)
             if resp and resp.get('success'):
-                msg = resp.get('data', {}).get('message', 'Matchmaking check complete')
-                print(f"  {msg}")
+                print(f"  ✓ Joined tournament {tid}!")
             else:
-                error_msg = resp.get('data', 'Unable to refresh') if resp else 'Connection timeout'
-                print(f"  {error_msg}")
-            last_refresh = time.time()  # Reset auto-refresh timer
+                print(f"  ✗ Failed: {resp.get('data','error') if resp else 'no response'}")
+
+        elif choice == '3':
+            try:
+                tid = input("  Tournament ID: ").strip()
+            except EOFError:
+                continue
+            if not tid:
+                continue
+            resp = _server_client.get_tournament_status(tid)
+            if resp and resp.get('success'):
+                t = resp.get('data', {})
+                print(f"\n  Tournament: {t.get('name','?')}")
+                print(f"  Status: {t.get('status','?')}  Round: {t.get('current_round',0)}/{t.get('rounds','?')}")
+                print(f"  Time Control: {t.get('time_control','?')}")
+                print(f"  Players: {', '.join(t.get('players',[]))}")
+                # Show standings
+                standings = t.get('standings', {})
+                if standings:
+                    print("  ── Standings ──")
+                    sorted_s = sorted(standings.items(), key=lambda x: x[1], reverse=True)
+                    for rank, (player, pts) in enumerate(sorted_s, 1):
+                        print(f"  {rank}. {player:<20} {pts} pts")
+                # Show current pairings
+                pairings = t.get('pairings', {})
+                cur_round = str(t.get('current_round', 0))
+                if cur_round in pairings:
+                    print(f"  ── Round {cur_round} Pairings ──")
+                    for pair in pairings[cur_round]:
+                        w = pair.get('white', '?')
+                        b = pair.get('black', '?')
+                        r = pair.get('result', 'pending')
+                        print(f"  {w} vs {b}  →  {r}")
+            else:
+                print(f"  Not found: {resp.get('data','') if resp else 'no response'}")
+            try:
+                input("  Press Enter...")
+            except EOFError:
+                pass
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  SERVER DAILY PUZZLE
+# ════════════════════════════════════════════════════════════════════════
+def server_daily_puzzle():
+    """Fetch and display the server's daily puzzle."""
+    global _server_client
+    if _offline_mode or not _server_client:
+        print("\n  Server puzzle requires an online connection.")
+        return
+
+    resp = _server_client.get_daily_puzzle()
+    if not resp or not resp.get('success'):
+        print(f"\n  Could not load puzzle: {resp.get('data','No response') if resp else 'No response'}")
+        return
+
+    p = resp.get('data', {})
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║  📅  SERVER DAILY PUZZLE — {p.get('date','today'):<30}║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  Theme  : {p.get('theme','?'):<46}║")
+    print(f"  ║  Rating : {p.get('rating','?'):<46}║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    fen = p.get('fen', '')
+    if fen:
+        try:
+            board = _board_from_fen(fen)
+            draw_board(board)
+        except Exception:
+            print(f"  FEN: {fen}")
+    solution = p.get('moves', [])
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  What is the best move?                                  ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+    try:
+        ans = input("  Your move (or Enter to reveal): ").strip()
+    except EOFError:
+        ans = ''
+    if solution:
+        sol_str = ' '.join(solution[:4])
+        if ans and ans.lower() == solution[0].lower():
+            print(f"  ✅ Correct! Solution: {sol_str}")
+        elif ans:
+            print(f"  ✗  Solution: {sol_str}")
+        else:
+            print(f"  Solution: {sol_str}")
+
+
+
+
+def _post_game_menu(board, white_name, black_name, game_id, chat_log):
+    """Show post-game options: analysis, chat history, rematch, server analysis."""
+    while True:
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║                  GAME OVER — OPTIONS                    ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  1. Step-by-step analysis (local engine)                ║")
+        print("  ║  2. Summary analysis                                    ║")
+        print("  ║  3. Request server analysis (queued)                    ║")
+        print("  ║  4. View chat history                                   ║")
+        print("  ║  5. Request rematch                                     ║")
+        print("  ║  6. View my achievements                                ║")
+        print("  ║  0. Back to menu                                        ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+
+        try:
+            choice = input("  Choice: ").strip()
+        except EOFError:
+            return
+
+        if choice == '0':
+            return
+
+        elif choice == '1':
+            if not board.san_log:
+                print("  No moves to analyze.")
+            else:
+                step_by_step_analysis(board.san_log)
+
+        elif choice == '2':
+            if not board.san_log:
+                print("  No moves to analyze.")
+            else:
+                print("\n  Starting analysis...")
+                _analyze_online_game_with_eta(board.san_log)
+
+        elif choice == '3':
+            if _server_client and game_id and board.san_log:
+                pgn_str = export_pgn(board.san_log, white_name, black_name)
+                resp = _server_client.request_analysis(
+                    game_id, board.san_log, pgn=pgn_str,
+                    white=white_name, black=black_name
+                )
+                if resp and resp.get('success'):
+                    d = resp.get('data', {})
+                    if d.get('queued'):
+                        print("  ✓ Analysis queued on server. You'll be notified when ready.")
+                    else:
+                        # Instant cached result
+                        note = d.get('note', '')
+                        print(f"  Analysis result: {note}")
+                else:
+                    print(f"  Could not request analysis: {resp.get('data','') if resp else 'no connection'}")
+            else:
+                print("  Analysis not available (need server connection and moves).")
+
+        elif choice == '4':
+            if not chat_log:
+                if _server_client and game_id:
+                    resp = _server_client.get_game_chat_history(game_id)
+                    if resp and resp.get('success'):
+                        chat_log = resp.get('data', {}).get('chat_log', [])
+            if not chat_log:
+                print("  No chat messages in this game.")
+            else:
+                print("\n  ── Chat History ─────────────────────────────────────────")
+                for entry in chat_log:
+                    sender = entry.get('from', '?')
+                    msg    = entry.get('msg', '')
+                    print(f"  [{sender}]: {msg}")
+                print("  ─────────────────────────────────────────────────────────")
+
+        elif choice == '5':
+            if _server_client and game_id:
+                resp = _server_client.request_rematch(game_id, white_name, black_name)
+                if resp and resp.get('success'):
+                    print("  Rematch requested! Waiting for opponent (30s)...")
+                    deadline = time.time() + 30
+                    while time.time() < deadline:
+                        try:
+                            msg = _server_client._async_queue.get(timeout=1.0)
+                        except Exception:
+                            continue
+                        if msg.get('type') == MSG_REMATCH_RESPONSE:
+                            d = msg.get('data', {})
+                            new_game_id = d.get('new_game_id')
+                            new_color   = d.get('color', 'white')
+                            new_white   = d.get('white', white_name)
+                            new_black   = d.get('black', black_name)
+                            new_opp     = new_black if new_color == 'white' else new_white
+                            print(f"\n  Rematch accepted! You play {new_color.upper()}.")
+                            play_online_matched_game(
+                                new_game_id, new_color, new_opp,
+                                _server_client._async_queue,
+                                _server_client._listener_stop
+                            )
+                            return
+                        elif msg.get('type') == MSG_REMATCH_REQUEST:
+                            _server_client.request_rematch(game_id, white_name, black_name)
+                    print("  Rematch timed out.")
+            else:
+                print("  Rematch not available.")
+
+        elif choice == '6':
+            achievements_menu()
+
+        else:
+            print("  Invalid choice.")
+
+
+
+
+def step_by_step_analysis(san_log, engine_time=1.5):
+    """
+    Interactive move-by-move game analysis.
+    Shows board + move classification for each half-move.
+    Navigation: [n]ext, [p]rev, [j]ump, [q]uit.
+    """
+    if not san_log:
+        print("  No moves to analyze.")
+        return
+
+    print(f"\n  Analysing {len(san_log)} moves (this may take a minute)...")
+    results = analyze_game(san_log, engine_time=engine_time, depth_limit=14)
+    if not results:
+        print("  Analysis failed.")
+        return
+
+    # Build board states
+    boards = [Board()]
+    boards[0].reset()
+    for san in san_log:
+        b = boards[-1].copy()
+        m = b.parse_san(san)
+        if m:
+            b.make(m)
+        boards.append(b)
+
+    idx = 0   # 0 = starting position, 1..N = after move idx
+    total = len(san_log)
+
+    while True:
+        clear_screen()
+        # Draw the position after move idx
+        persp = WHITE if idx == 0 or results[idx - 1]['side'] == 'Black' else BLACK
+        draw_board(boards[idx], persp=WHITE, labels=True)
+
+        if idx == 0:
+            print("  ── Starting position ──────────────────────────────")
+        else:
+            r = results[idx - 1]
+            move_num  = r['move_num']
+            side      = r['side']
+            san       = r['san']
+            symbol    = r['symbol']
+            label     = r['label']
+            cp_loss   = r['cp_loss']
+            best      = r.get('best', '')
+            print(f"  ── Move {move_num}{'.' if side == 'White' else '...'} {san}  {symbol} {label}", end='')
+            if cp_loss is not None and cp_loss > 0:
+                print(f"  (−{cp_loss} cp)", end='')
+            print()
+            if best and not r.get('is_best'):
+                print(f"     Best: {best}")
+
+        print(f"\n  Move {idx}/{total}  │  [n]ext  [p]rev  [j]ump  [q]uit")
+        try:
+            cmd = input("  > ").strip().lower()
+        except EOFError:
+            break
+
+        if cmd in ('q', 'quit'):
+            break
+        elif cmd in ('n', '', 'next'):
+            if idx < total:
+                idx += 1
+        elif cmd in ('p', 'prev', 'b', 'back'):
+            if idx > 0:
+                idx -= 1
+        elif cmd.startswith('j'):
+            parts = cmd.split()
+            if len(parts) == 2:
+                try:
+                    idx = max(0, min(total, int(parts[1])))
+                except ValueError:
+                    pass
+
+
+def _analyze_online_game_with_eta(san_log, engine_time=1.5):
+    """Analyze a game and display ETA progress."""
+    total = len(san_log)
+    if total == 0:
+        print("  No moves to analyze.")
+        return
     
-    stop_listener.set()
-    listener_thread.join(timeout=2)
+    print(f"\n  Analyzing {total} moves...")
+    results = []
+    board = Board()
+    board.reset()
+    tb = Tablebase()
+    book = OpeningBook()
+    eng = Engine(tb=tb, book=None, strength=1.5)
+    
+    start_time = time.time()
+    _CP = {PAWN: 100, KNIGHT: 320, BISHOP: 330, ROOK: 500, QUEEN: 900, KING: 0}
+    
+    eng.tt.clear()
+    _, prev_score = eng.search_best(board, t_limit=engine_time, depth_limit=12)
+    
+    for i, san in enumerate(san_log):
+        elapsed = time.time() - start_time
+        if i > 0 and elapsed > 0:
+            rate = i / elapsed
+            eta = (total - i) / rate
+            print(f"  Analyzing move {i+1}/{total}... ETA: {eta:.0f}s", end='\r')
+        
+        side = WHITE if i % 2 == 0 else BLACK
+        m = board.parse_san(san)
+        if m is None:
+            break
+        
+        is_book_move = any(board.parse_san(bs) == m for bs, _ in book.probe(board))
+        
+        eng.tt.clear()
+        best_mv, best_score = eng.search_best(board, t_limit=engine_time, depth_limit=12)
+        is_best = (m == best_mv)
+        best_san_str = board.san(best_mv) if best_mv else '?'
+        score_before = prev_score
+        
+        board.make(m)
+        board.san_log.append(san)
+        
+        eng.tt.clear()
+        _, score_after_opp = eng.search_best(board, t_limit=engine_time * 0.6, depth_limit=10)
+        score_after_mover = -score_after_opp
+        cp_loss = score_before - score_after_mover
+        
+        category, label, symbol = classify_move(cp_loss, is_best, is_book_move)
+        results.append({
+            'move_num': i // 2 + 1,
+            'side': side,
+            'san': san,
+            'category': category,
+            'label': label,
+            'symbol': symbol,
+            'cp_loss': cp_loss,
+            'score': score_after_mover,
+            'best': best_san_str,
+            'is_best': is_best,
+            'is_book': is_book_move,
+        })
+        prev_score = score_after_opp
+    
+    print(f"  Analysis complete! ({time.time() - start_time:.1f}s)                    ")
+    print_analysis(results)
 
 
 def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_listener):
-    """Play an online matched game."""
+    """Play an online matched game with clock, chat, spectator support."""
     board = Board()
     board.reset()
     last_mv = None
     game_start_time = time.time()
-
-    my_turn = (my_color == 'white' and board.side == WHITE) or \
-              (my_color == 'black' and board.side == BLACK)
+    chat_log = []  # Persistent chat log for this game
+    
+    # Clock state (updated by server broadcasts)
+    white_remaining = 0.0
+    black_remaining = 0.0
+    clock_enabled = False
 
     my_name = _current_user
     white_name = my_name if my_color == 'white' else opponent_name
@@ -4854,38 +6459,61 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
     print("  ║                    ONLINE GAME                           ║")
     print("  ╠══════════════════════════════════════════════════════════╣")
     print(f"  ║  {white_name:<28} vs  {black_name:<28}║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  Commands: 'draw', 'resign', 'chat <msg>', 'moves'       ║")
     print("  ╚══════════════════════════════════════════════════════════╝\n")
 
-    while True:
+    game_over = False
+    game_result = None  # 'white', 'black', or 'draw'
+
+    while not game_over:
         # Process messages from centralized queue
         try:
-            while not _server_client._msg_queue.empty():
-                msg = _server_client._msg_queue.get_nowait()
+            while not _server_client._async_queue.empty():
+                msg = _server_client._async_queue.get_nowait()
                 msg_type = msg.get('type', '')
                 data = msg.get('data', {})
                 
                 if msg_type == MSG_GAME_MOVE:
                     move_san = data.get('move')
                     from_player = data.get('from_player')
-                    # Apply the move
                     m = board.parse_san(move_san)
                     if m:
                         board.make(m)
+                        board.san_log.append(move_san)
                         last_mv = m
-                        print(f"  {from_player} plays: {move_san}")
+                        print(f"  ♟ {from_player} plays: {move_san}")
+
+                elif msg_type == MSG_GAME_CLOCK_UPDATE:
+                    white_remaining = data.get('white_remaining', 0)
+                    black_remaining = data.get('black_remaining', 0)
+                    clock_enabled = True
+
+                elif msg_type == MSG_GAME_TIMEOUT:
+                    timed_out = data.get('timed_out')
+                    winner = data.get('winner')
+                    print(f"\n  ⏰ {timed_out} ran out of time! {winner} wins!")
+                    game_result = 'white' if winner == white_name else 'black'
+                    _save_game_to_server(white_name, black_name, game_result,
+                                        board.san_log, time.time() - game_start_time,
+                                        show_elo_changes=True)
+                    game_over = True
+                    break
 
                 elif msg_type == MSG_GAME_RESIGN:
                     winner = data.get('winner')
-                    print(f"\n  {data.get('resigned_by')} resigned. {winner} wins!")
-                    _save_game_to_server(white_name, black_name,
-                                        'white' if winner == white_name else 'black',
+                    resigned_by = data.get('resigned_by')
+                    print(f"\n  ✗ {resigned_by} resigned. {winner} wins!")
+                    game_result = 'white' if winner == white_name else 'black'
+                    _save_game_to_server(white_name, black_name, game_result,
                                         board.san_log, time.time() - game_start_time,
                                         show_elo_changes=True)
-                    return
+                    game_over = True
+                    break
 
                 elif msg_type == MSG_GAME_DRAW_OFFER:
                     offered_by = data.get('offered_by')
-                    print(f"\n  {offered_by} offers a draw.")
+                    print(f"\n  ½ {offered_by} offers a draw.")
                     try:
                         ans = input("  Accept draw? [y/N]: ").strip().lower()
                     except EOFError:
@@ -4893,15 +6521,38 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
                     if ans in ('y', 'yes'):
                         _server_client.accept_draw(game_id)
                         print("  Game ended in a draw.")
+                        game_result = 'draw'
                         _save_game_to_server(white_name, black_name, 'draw',
                                             board.san_log, time.time() - game_start_time,
                                             show_elo_changes=True)
-                        return
+                        game_over = True
+                        break
+                    else:
+                        print("  Draw declined.")
+
+                elif msg_type == MSG_GAME_DRAW_ACCEPT:
+                    print("\n  ½ Draw accepted! Game ended in a draw.")
+                    game_result = 'draw'
+                    _save_game_to_server(white_name, black_name, 'draw',
+                                        board.san_log, time.time() - game_start_time,
+                                        show_elo_changes=True)
+                    game_over = True
+                    break
 
                 elif msg_type == MSG_GAME_CHAT:
-                    print(f"\n  [{data.get('from_player')}]: {data.get('message')}")
+                    from_p = data.get('from_player')
+                    msg_text = data.get('message')
+                    chat_log.append({'from': from_p, 'msg': msg_text})
+                    print(f"\n  💬 [{from_p}]: {msg_text}")
+
+                elif msg_type == MSG_REMATCH_REQUEST:
+                    from_p = data.get('from', '?')
+                    print(f"\n  🔄 {from_p} wants a rematch! Use post-game menu to respond.")
         except:
             pass
+
+        if game_over:
+            break
         
         # Draw board
         persp = WHITE if my_color == 'white' else BLACK
@@ -4909,9 +6560,16 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
         
         turn_str = "White" if board.side == WHITE else "Black"
         chk_str = "  *** CHECK ***" if board.in_check() else ""
+        
+        # Clock display
+        if clock_enabled:
+            wt = _fmt_online_clock(white_remaining)
+            bt = _fmt_online_clock(black_remaining)
+            print(f"  ⏱ White: {wt}  |  Black: {bt}")
+        
         print(f"  Move {board.fullmove} — {turn_str} to move{chk_str}")
         
-        # Show moves
+        # Show move history
         if board.san_log:
             pairs = []
             for i in range(0, len(board.san_log), 2):
@@ -4927,28 +6585,35 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
             if board.in_check():
                 winner = BLACK if board.side == WHITE else WHITE
                 winner_name = black_name if winner == BLACK else white_name
-                print(f"  Checkmate! {winner_name} wins!")
-                _save_game_to_server(white_name, black_name,
-                                    'white' if winner == WHITE else 'black',
+                print(f"  ✓ Checkmate! {winner_name} wins!")
+                game_result = 'white' if winner == WHITE else 'black'
+                _save_game_to_server(white_name, black_name, game_result,
                                     board.san_log, time.time() - game_start_time,
                                     show_elo_changes=True)
             else:
                 print("  Stalemate - Draw!")
+                game_result = 'draw'
                 _save_game_to_server(white_name, black_name, 'draw',
                                     board.san_log, time.time() - game_start_time,
                                     show_elo_changes=True)
-            return
+            game_over = True
+            break
 
         # Check for draw conditions
-        for cond, msg in [(board.is_repetition(), "threefold repetition"),
+        for cond, msg_text in [(board.is_repetition(), "threefold repetition"),
                           (board.is_fifty(), "50-move rule"),
                           (board.insufficient_material(), "insufficient material")]:
             if cond:
-                print(f"  Draw: {msg}")
+                print(f"  Draw: {msg_text}")
+                game_result = 'draw'
                 _save_game_to_server(white_name, black_name, 'draw',
                                     board.san_log, time.time() - game_start_time,
                                     show_elo_changes=True)
-                return
+                game_over = True
+                break
+        
+        if game_over:
+            break
         
         # Check if it's my turn
         my_turn_now = (my_color == 'white' and board.side == WHITE) or \
@@ -4961,9 +6626,8 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
         
         # My turn - get move
         try:
-            raw = input("  Your move: ").strip()
+            raw = input("  Your move (or 'resign'/'draw'/'chat <msg>'): ").strip()
         except EOFError:
-            # Resign on disconnect
             _server_client.resign_game(game_id)
             return
         
@@ -4972,22 +6636,34 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
         
         cmd = raw.lower()
         
-        if cmd in ('quit', 'exit'):
+        if cmd in ('quit', 'exit', 'resign'):
             _server_client.resign_game(game_id)
             print("  You resigned.")
-            return
+            game_result = 'black' if my_color == 'white' else 'white'
+            game_over = True
+            break
         
         if cmd == 'draw':
             _server_client.offer_draw(game_id)
             print("  Draw offer sent.")
             continue
         
-        if cmd.startswith('chat '):
-            _server_client.send_chat(game_id, raw[5:])
+        if cmd.startswith('chat ') and len(raw) > 5:
+            msg_text = raw[5:]
+            _server_client.send_chat(game_id, msg_text)
+            chat_log.append({'from': my_name, 'msg': msg_text})
+            print(f"  💬 [You]: {msg_text}")
             continue
         
         if cmd == 'help':
-            print(HELP)
+            print("  Commands: <move>  draw  resign  chat <message>  moves  clock")
+            continue
+        
+        if cmd == 'clock':
+            if clock_enabled:
+                print(f"  ⏱ White: {_fmt_online_clock(white_remaining)}  |  Black: {_fmt_online_clock(black_remaining)}")
+            else:
+                print("  No clock enabled for this game.")
             continue
         
         if cmd == 'moves':
@@ -4999,7 +6675,7 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
         # Parse and send move
         mv = board.parse_san(raw)
         if mv is None:
-            print(f"  Illegal/unrecognised: '{raw}'. Try 'moves' or 'help'.")
+            print(f"  Illegal/unrecognised: '{raw}'. Try 'moves' for legal moves.")
             continue
         
         s = board.san(mv)
@@ -5007,6 +6683,9 @@ def play_online_matched_game(game_id, my_color, opponent_name, msg_queue, stop_l
         board.make(mv)
         board.san_log.append(s)
         last_mv = mv
+
+    # Post-game options
+    _post_game_menu(board, white_name, black_name, game_id, chat_log)
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -5147,26 +6826,82 @@ def select_bot_level():
 # ════════════════════════════════════════════════════════════════════════
 #  BOARD DISPLAY
 # ════════════════════════════════════════════════════════════════════════
+def _eval_bar(score_cp, width=30):
+    """
+    Render a compact evaluation bar as text.
+    score_cp: centipawns from White's perspective (+ve = White better).
+    Returns a string like:  ████████████████░░░░░░░░░░░░  +1.23
+    """
+    # Clamp to ±600 cp for display purposes
+    clamped = max(-600, min(600, score_cp))
+    white_frac = (clamped + 600) / 1200          # 0.0..1.0
+    filled = int(round(white_frac * width))
+    bar = '█' * filled + '░' * (width - filled)
+
+    # Label
+    if abs(score_cp) >= 9_000_000:
+        label = 'M#' if score_cp > 0 else '#M'
+    else:
+        pawns = score_cp / 100.0
+        sign  = '+' if pawns > 0 else ''
+        label = f'{sign}{pawns:.2f}'
+
+    return f'  [{bar}] {label:>6}'
+
+
 def draw_board(board, persp=WHITE, last=None, labels=True):
-    lines=['']
-    ranks=range(7,-1,-1) if persp==WHITE else range(8)
-    files=range(8)       if persp==WHITE else range(7,-1,-1)
-    for rank in ranks:
-        row=f" {rank+1} "
+    """Render the chess board with Unicode piece symbols.
+
+    Pieces: ♔♕♖♗♘♙ (White) and ♚♛♜♝♞♟ (Black)
+    Highlighted squares (last move) are marked with [ ] brackets.
+    Dark empty squares show a · for contrast.
+    """
+    labels = labels and _settings.get('show_coords', True)
+
+    highlighted = set()
+    if last:
+        highlighted = {last.from_sq, last.to_sq}
+
+    ranks = range(7, -1, -1) if persp == WHITE else range(8)
+    files = range(8)         if persp == WHITE else range(7, -1, -1)
+
+    file_labels = [chr(ord('a') + f) for f in files]
+
+    # Each cell is 3 chars wide; Unicode symbols are 1 display-column wide
+    sep = '  +' + '---+' * 8
+
+    lines = ['']
+    lines.append(sep)
+
+    for i, rank in enumerate(ranks):
+        row_str = f' {rank + 1}|'
         for file in files:
-            sq=rank*8+file; p=board.sq[sq]
-            dk=(rank+file)%2==0
-            hl=last and sq in(last.from_sq,last.to_sq)
+            sq   = rank * 8 + file
+            p    = board.sq[sq]
+            dark = (rank + file) % 2 == 0
+            hl   = sq in highlighted
+
             if p:
-                ch=PIECE_ASCII[p]
-                row+=(f'[{ch}]' if dk else f' {ch} ')
+                ch = PIECE_UNICODE[p]
+                if hl:
+                    row_str += f'[{ch}]|'
+                else:
+                    row_str += f' {ch} |'
             else:
-                bg='*' if hl else('░' if dk else ' ')
-                row+=(f'[{bg}]' if dk else f' {bg} ')
-        lines.append(row)
+                if hl:
+                    row_str += '[ ]|'
+                elif dark:
+                    row_str += ' · |'
+                else:
+                    row_str += '   |'
+
+        lines.append(row_str)
+        lines.append(sep)
+
     if labels:
-        fl='    '+''.join(f' {chr(ord("a")+f)} ' for f in files)
-        lines.append(fl)
+        file_row = '    ' + '   '.join(file_labels)
+        lines.append(file_row)
+
     lines.append('')
     print('\n'.join(lines))
 
@@ -5183,26 +6918,35 @@ BANNER = """
 ║  ╚██████╗██║  ██║███████╗███████║███████║                    ║
 ║   ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝  Ultimate Ed.      ║
 ║                                                              ║
-║  Neural Net • Opening Book • Tablebases • ELO • Multiplayer  ║
+║  Neural Net • Opening Book • Tablebases • Clocks • PGN       ║
+║  Per-TC ELO • Replay Viewer • Endgame Trainer                ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
 HELP = """
  ╔─── IN-GAME COMMANDS ──────────────────────────────────────────╗
- │  <move>    SAN move, e.g.: e4  Nf3  O-O  exd5  e8=Q           │
- │  undo      Take back last 2 half-moves (vs AI only)           │
- │  moves     Show all legal moves                               │
- │  flip      Flip board perspective                             │
- │  resign    Resign the game                                    │
- │  draw      Claim/offer draw                                   │
- │  chat <m>  Send chat message (multiplayer)                    │
- │  elo       Show ELO leaderboard                               │
- │  help      This help                                          │
- │  quit      Exit to main menu                                  │
+ │  <move>    SAN:  e4  Nf3  O-O  exd5  e8=Q                     │
+ │            Long algebraic also works:  e2e4  e2-e4  g1f3       │
+ │  undo      Take back last 2 half-moves (vs AI only)            │
+ │  moves     Show all legal moves                                │
+ │  flip      Flip board perspective                              │
+ │  resign    Resign the game                                     │
+ │  draw      Claim/offer draw                                    │
+ │  save      Save game & continue later (vs AI only)            │
+ │  pgn       Print PGN of game so far                            │
+ │  replay    Replay the game so far interactively                │
+ │  chat <m>  Send chat message (multiplayer)                     │
+ │  elo       Show ELO leaderboard (current time-control)         │
+ │  help      This help                                           │
+ │  quit      Exit to main menu                                   │
  ╠─── SAN REFERENCE ─────────────────────────────────────────────╣
  │  Pawn:     e4  d5  exd5  (promotion:) e8=Q  e8=R  e8=B  e8=N  │
- │  Piece:    Nf3  Bxc4  Rhe1  Qd1f3 (disambiguation)            │
- │  Castle:   O-O  (kingside)   O-O-O  (queenside)               │
+ │  Piece:    Nf3  Bxc4  Rhe1  Qd1f3 (disambiguation)             │
+ │  Castle:   O-O  (kingside)   O-O-O  (queenside)                │
+ ╠─── REPLAY VIEWER ─────────────────────────────────────────────╣
+ │  n/Enter   Next move    p   Previous move                      │
+ │  b         Start        e   End      g<N>  Go to move N        │
+ │  flip      Flip board   a   Analyze from here   q   Quit       │
  ╚───────────────────────────────────────────────────────────────╝
 """
 
@@ -5210,34 +6954,63 @@ HELP = """
 #  GAME RESULT HANDLING
 # ════════════════════════════════════════════════════════════════════════
 def handle_game_end(board, elo_sys, white_name, black_name,
-                    winner_color=None, draw=False, resigned=False):
-    """Update ELO, offer analysis."""
+                    winner_color=None, draw=False, resigned=False,
+                    elo_category='unlimited'):
+    """Update ELO (per category), offer analysis and PGN export."""
     print()
     if draw:
         print("  ½-½  Draw\n")
-        elo_sys.update(white_name, black_name, 0.5)
-        elo_sys.update(black_name, white_name, 0.5)
-        result_str='Draw'
-    elif winner_color==WHITE:
+        elo_change = elo_sys.update(white_name, black_name, 0.5, category=elo_category)
+        result_str = 'Draw'
+    elif winner_color == WHITE:
         print(f"  1-0  {white_name} wins!\n")
-        elo_sys.update(white_name, black_name, 1)
-        result_str='White wins'
+        elo_change = elo_sys.update(white_name, black_name, 1, category=elo_category)
+        result_str = 'White wins'
     else:
         print(f"  0-1  {black_name} wins!\n")
-        elo_sys.update(black_name, white_name, 1)
-        result_str='Black wins'
+        elo_change = elo_sys.update(black_name, white_name, 1, category=elo_category)
+        result_str = 'Black wins'
 
-    w_elo=elo_sys.get_elo(white_name); b_elo=elo_sys.get_elo(black_name)
-    print(f"  ELO — {white_name}: {w_elo}  |  {black_name}: {b_elo}\n")
+    w_elo = elo_sys.get_elo(white_name, elo_category)
+    b_elo = elo_sys.get_elo(black_name, elo_category)
+    cat_label = elo_category.capitalize()
+    print(f"  [{cat_label}] ELO — {white_name}: {w_elo}  |  {black_name}: {b_elo}")
+    if elo_change is not None:
+        sign = '+' if elo_change >= 0 else ''
+        print(f"  Your ELO change: {sign}{elo_change}\n")
+    else:
+        print()
 
-    # Offer analysis
+    # Offer options
+    print("  What would you like to do?")
+    print("  1. Analyze game   2. Replay game   3. Export PGN   [Enter] Skip")
     try:
-        ans=input("  Analyze game? [y/N] ").strip().lower()
+        ans = input("  Choice: ").strip().lower()
     except EOFError:
-        ans='n'
-    if ans in('y','yes'):
-        results=analyze_game(board.san_log, engine_time=1.0)
+        ans = ''
+    if ans in ('1', 'a', 'analyze', 'yes', 'y'):
+        results = analyze_game(board.san_log, engine_time=1.0)
         print_analysis(results)
+    elif ans in ('2', 'r', 'replay'):
+        replay_game(board.san_log, white_name=white_name, black_name=black_name)
+    elif ans in ('3', 'p', 'pgn', 'export'):
+        result_tag = ('1-0' if winner_color == WHITE else
+                      '0-1' if winner_color == BLACK else '1/2-1/2')
+        pgn = export_pgn(board.san_log, white_name, black_name, result_tag)
+        print("\n" + "─"*70)
+        print(pgn)
+        print("─"*70)
+        try:
+            fn = input("  Save to file (blank to skip): ").strip()
+        except EOFError:
+            fn = ''
+        if fn:
+            try:
+                with open(fn, 'w') as f:
+                    f.write(pgn)
+                print(f"  ✓ Saved to {fn}")
+            except Exception as e:
+                print(f"  Error: {e}")
 
 def _replay_board(san_log):
     """Replay san_log on a fresh board. Returns board or None."""
@@ -5255,37 +7028,124 @@ def play_vs_ai(elo_sys, tb, book):
     board=Board(); board.reset()
     persp=WHITE; last_mv=None
 
-    # Select bot difficulty
-    bot_level = select_bot_level()
-    bot = ChessBot(level=bot_level, tb=tb, book=book)
-    bot_name = bot.get_name()
-
-    while True:
+    # ── Resume saved game? ──────────────────────────────────────────────
+    saved = load_bot_save()
+    if saved:
+        saved_at = saved.get('saved_at', 'unknown')
+        moves_n  = len(saved.get('san_log', []))
+        print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+        print(f"  ║  SAVED BOT GAME FOUND                                    ║")
+        print(f"  ╠══════════════════════════════════════════════════════════╣")
+        print(f"  ║  Saved : {saved_at[:19]:<49}║")
+        print(f"  ║  Moves : {moves_n:<49}║")
+        print(f"  ║  Player: {saved.get('player_name','?'):<49}║")
+        print(f"  ╠══════════════════════════════════════════════════════════╣")
+        print(f"  ║  R. Resume saved game                                    ║")
+        print(f"  ║  N. Start a new game                                     ║")
+        print(f"  ╚══════════════════════════════════════════════════════════╝")
         try:
-            c=input("  Play as [W]hite or [B]lack? [W]: ").strip().lower() or 'w'
-        except EOFError: return
-        if c in('w','white'): human_color=WHITE; break
-        if c in('b','black'): human_color=BLACK; break
-        print("  Please enter 'w' or 'b'.")
+            res_choice = input("  Choice [R/N]: ").strip().lower()
+        except EOFError:
+            return
+        if res_choice in ('r', 'resume'):
+            # Restore state
+            san_log      = saved.get('san_log', [])
+            human_color  = saved.get('human_color', WHITE)
+            bot_level    = saved.get('bot_level', 'medium')
+            player_name  = saved.get('player_name', 'Player')
+            clock_mins   = saved.get('clock_mins', 0)
+            clock_inc    = saved.get('clock_inc', 0)
+            elo_category = saved.get('elo_category', 'rapid')
 
-    # Get player name (use logged-in username if available)
-    default_name = _current_user if _current_user else 'Player'
-    try:
-        player_name=input(f"  Your name [{default_name}]: ").strip() or default_name
-    except EOFError:
-        player_name=default_name
+            # Replay moves onto board
+            b2 = Board(); b2.reset()
+            for san in san_log:
+                m = b2.parse_san(san)
+                if m: b2.make(m); b2.san_log.append(san)
+            board = b2
+            last_mv = None
+            bot = ChessBot(level=bot_level, tb=tb, book=book)
+            bot_name = bot.get_name()
+            clock = ChessClock(clock_mins, clock_inc) if clock_mins > 0 else None
+            persp = human_color
+            white_name = player_name if human_color == WHITE else bot_name
+            black_name = bot_name    if human_color == WHITE else player_name
+            game_start = time.time()
+            print(f"  ✓ Resumed! Move {board.fullmove}.")
+            # Jump directly into the game loop (skip setup below)
+            import sys as _sys
+            # Use a sentinel to skip the normal setup path
+            _resuming = True
+        else:
+            _resuming = False
+            delete_bot_save()
+    else:
+        _resuming = False
 
-    # Record game start time
-    game_start = time.time()
+    if not _resuming:
+        # ── Normal new-game setup ──────────────────────────────────────────
+        bot_level = select_bot_level()
+        bot = ChessBot(level=bot_level, tb=tb, book=book)
+        bot_name = bot.get_name()
 
-    persp=human_color
-    white_name=player_name if human_color==WHITE else bot_name
-    black_name=bot_name if human_color==WHITE else player_name
+        while True:
+            try:
+                c=input("  Play as [W]hite or [B]lack? [W]: ").strip().lower() or 'w'
+            except EOFError: return
+            if c in('w','white'): human_color=WHITE; break
+            if c in('b','black'): human_color=BLACK; break
+            print("  Please enter 'w' or 'b'.")
+
+        # Get player name (use logged-in username if available)
+        default_name = _current_user if _current_user else 'Player'
+        try:
+            player_name=input(f"  Your name [{default_name}]: ").strip() or default_name
+        except EOFError:
+            player_name=default_name
+
+        # Select time control
+        clock_mins, clock_inc = ChessClock.select_time_control()
+        clock = ChessClock(clock_mins, clock_inc) if clock_mins > 0 else None
+        elo_category = EloSystem.category_for(clock_mins)
+        game_start = time.time()
+        persp=human_color
+        white_name=player_name if human_color==WHITE else bot_name
+        black_name=bot_name if human_color==WHITE else player_name
+
+        # Show time control info
+        if clock_mins > 0:
+            tc_str = f"{clock_mins}+{clock_inc}" if clock_inc else f"{clock_mins}+0"
+            print(f"  Time control: {tc_str}  [{elo_category.capitalize()}]\n")
+        else:
+            print(f"  Time control: Unlimited  [{elo_category.capitalize()}]\n")
 
     while True:
         draw_board(board, persp, last_mv)
+        # Evaluation bar (toggle in Settings → Eval Bar)
+        if _settings.get('show_eval_bar', False):
+            _ev = evaluate(board)
+            if board.side == BLACK: _ev = -_ev
+            print(_eval_bar(_ev))
         turn_str="White" if board.side==WHITE else "Black"
         chk_str="  *** CHECK ***" if board.in_check() else ""
+
+        # Clock display
+        if clock:
+            wt = _fmt_clock(clock, WHITE)
+            bt = _fmt_clock(clock, BLACK)
+            print(f"  ⏱  White: {wt}   Black: {bt}")
+            # Check for flag
+            if clock.flag(WHITE):
+                print("  ⏰ White's time is up! Black wins on time!")
+                handle_game_end(board,elo_sys,white_name,black_name,winner_color=BLACK,elo_category=elo_category)
+                _save_game_to_server(white_name,black_name,'black',board.san_log,time.time()-game_start)
+                return
+            if clock.flag(BLACK):
+                print("  ⏰ Black's time is up! White wins on time!")
+                handle_game_end(board,elo_sys,white_name,black_name,winner_color=WHITE,elo_category=elo_category)
+                _save_game_to_server(white_name,black_name,'white',board.san_log,time.time()-game_start)
+                return
+
         print(f"  Move {board.fullmove} — {turn_str} to move{chk_str}")
 
         # Show recent moves
@@ -5297,9 +7157,11 @@ def play_vs_ai(elo_sys, tb, book):
                 pairs.append(f"{i//2+1}. {wm} {bm}")
             print("  "+' | '.join(pairs[-4:]))
 
-        # ELO display
-        we=elo_sys.get_elo(white_name); be=elo_sys.get_elo(black_name)
-        print(f"  {white_name}({we}) vs {black_name}({be})\n")
+        # ELO display — show category-specific ELO
+        we=elo_sys.get_elo(white_name, elo_category)
+        be=elo_sys.get_elo(black_name, elo_category)
+        cat_label = elo_category.capitalize()
+        print(f"  [{cat_label}] {white_name}({we}) vs {black_name}({be})\n")
 
         legal=board.legal()
         # Terminal conditions
@@ -5312,7 +7174,7 @@ def play_vs_ai(elo_sys, tb, book):
             else:
                 winner_color = None
                 result = 'draw'
-            handle_game_end(board,elo_sys,white_name,black_name,winner_color=winner_color)
+            handle_game_end(board,elo_sys,white_name,black_name,winner_color=winner_color,elo_category=elo_category)
             # Save game to server
             _save_game_to_server(white_name, black_name, result, board.san_log, time.time()-game_start)
             return
@@ -5322,24 +7184,29 @@ def play_vs_ai(elo_sys, tb, book):
                          (board.insufficient_material(),"insufficient material")]:
             if cond:
                 print(f"  ½-½ Draw: {msg}")
-                handle_game_end(board,elo_sys,white_name,black_name,draw=True)
+                handle_game_end(board,elo_sys,white_name,black_name,draw=True,elo_category=elo_category)
                 # Save game to server
                 _save_game_to_server(white_name, black_name, 'draw', board.san_log, time.time()-game_start)
                 return
 
         # AI turn
         if board.side!=human_color:
+            ai_side = board.side
+            if clock: clock.start(ai_side)
             print(f"  {bot_name} thinking...\n")
             mv=bot.get_move(board)
+            if clock: clock.stop(ai_side)
             if mv:
                 s=board.san(mv); board.make(mv); board.san_log.append(s)
                 last_mv=mv; print(f"\n  {bot_name} plays: {s}\n")
             continue
 
         # Human turn
+        if clock: clock.start(human_color)
         try:
-            raw=input("  Your move: ").strip()
+            raw=input("  Your move (or 'help'): ").strip()
         except EOFError:
+            if clock: clock.stop(human_color)
             return
         if not raw: continue
         cmd=raw.lower()
@@ -5349,24 +7216,33 @@ def play_vs_ai(elo_sys, tb, book):
             if board.san_log:
                 result = 'black' if human_color==WHITE else 'white'
                 _save_game_to_server(white_name, black_name, result, board.san_log, time.time()-game_start)
+            delete_bot_save()
             return
         if cmd=='help': print(HELP); continue
         if cmd=='flip': persp=1-persp; continue
-        if cmd=='elo': elo_sys.leaderboard(); continue
+        if cmd=='elo': elo_sys.leaderboard(category=elo_category); continue
+        if cmd=='pgn':
+            result_tag = '*'
+            pgn = export_pgn(board.san_log, white_name, black_name, result_tag)
+            print(pgn); continue
+        if cmd=='replay':
+            replay_game(board.san_log, white_name=white_name, black_name=black_name); continue
         if cmd=='moves':
             sms=[board.san(m) for m in legal]
             for i in range(0,len(sms),8):
                 print("  "+"  ".join(f"{s:<8}" for s in sms[i:i+8]))
             print(); continue
         if cmd=='resign':
+            if clock: clock.stop(human_color)
             winner=BLACK if human_color==WHITE else WHITE
             print(f"  {player_name} resigned.")
-            handle_game_end(board,elo_sys,white_name,black_name,winner_color=winner)
+            handle_game_end(board,elo_sys,white_name,black_name,winner_color=winner,elo_category=elo_category)
             _save_game_to_server(white_name, black_name, 'black' if human_color==WHITE else 'white', board.san_log, time.time()-game_start)
             return
         if cmd=='draw':
             if board.is_repetition() or board.is_fifty():
-                handle_game_end(board,elo_sys,white_name,black_name,draw=True)
+                if clock: clock.stop(human_color)
+                handle_game_end(board,elo_sys,white_name,black_name,draw=True,elo_category=elo_category)
                 _save_game_to_server(white_name, black_name, 'draw', board.san_log, time.time()-game_start)
                 return
             print("  Engine declines the draw offer."); continue
@@ -5377,18 +7253,38 @@ def play_vs_ai(elo_sys, tb, book):
             else: print("  Cannot undo.")
             continue
         if cmd.startswith('chat '): print("  (Chat not available vs AI)"); continue
+        if cmd == 'save':
+            state = {
+                'san_log':      board.san_log[:],
+                'human_color':  human_color,
+                'bot_level':    bot_level,
+                'player_name':  player_name,
+                'clock_mins':   clock_mins,
+                'clock_inc':    clock_inc,
+                'elo_category': elo_category,
+                'saved_at':     datetime.now().isoformat(),
+            }
+            if save_bot_game(state):
+                print("  ✓ Game saved. You can resume it from the main menu (Play vs AI → Resume).")
+            else:
+                print("  ✗ Could not save game.")
+            continue
 
+        # Normalise move (accept e2e4, e2-e4, etc.)
+        raw = board._normalise_input(raw)
         mv=board.parse_san(raw)
         if mv is None:
             print(f"  Illegal/unrecognised: '{raw}'. Try 'moves' or 'help'.")
             continue
+        if clock: clock.stop(human_color)
         s=board.san(mv); board.make(mv); board.san_log.append(s); last_mv=mv
 
 
-def _save_game_to_server(white, black, result, moves, duration, show_elo_changes=False):
+def _save_game_to_server(white, black, result, moves, duration, show_elo_changes=False,
+                          pgn='', move_times=None):
     """
     Save game result to the server if connected.
-    If show_elo_changes=True, display ELO changes after the game.
+    Passes PGN and move_times for server-side storage and anti-cheat analysis.
     Also saves locally for later analysis.
     """
     # Save locally for analysis
@@ -5396,7 +7292,10 @@ def _save_game_to_server(white, black, result, moves, duration, show_elo_changes
 
     if _server_client is not None and _server_client.sock is not None and _current_user:
         try:
-            response = _server_client.save_game(white, black, result, moves, int(duration), rated=True)
+            response = _server_client.save_game(
+                white, black, result, moves, int(duration),
+                rated=True, pgn=pgn, move_times=move_times or []
+            )
             if response:
                 if response.get('success'):
                     if show_elo_changes:
@@ -5413,7 +7312,6 @@ def _save_game_to_server(white, black, result, moves, duration, show_elo_changes
                                 print(f"  ║  {player:<20}: {old_elo} → {new_elo} ({sign}{change}){'':15}║")
                             print("  ╚══════════════════════════════════════════════════════════╝")
                 else:
-                    # Show error message
                     error_msg = response.get('data', 'Unknown error')
                     print(f"\n  Warning: Failed to save game to server: {error_msg}")
             else:
@@ -5421,7 +7319,6 @@ def _save_game_to_server(white, black, result, moves, duration, show_elo_changes
         except Exception as e:
             print(f"\n  Warning: Error saving game to server: {e}")
     else:
-        # Server not available, but game is saved locally
         if not _server_client or _server_client.sock is None:
             print("\n  Note: Server not connected. Game saved locally only.")
         elif not _current_user:
@@ -5437,28 +7334,52 @@ def play_local_2p(elo_sys):
         bn=input("  Black player name [Black]: ").strip() or 'Black'
     except EOFError: return
 
+    # Select time control for local game
+    clock_mins, clock_inc = ChessClock.select_time_control()
+    clock = ChessClock(clock_mins, clock_inc) if clock_mins > 0 else None
+    elo_category = EloSystem.category_for(clock_mins)
+    if clock_mins > 0:
+        tc_str = f"{clock_mins}+{clock_inc}" if clock_inc else f"{clock_mins}+0"
+        print(f"  Time control: {tc_str}  [{elo_category.capitalize()}]\n")
+
     while True:
         draw_board(board, persp, last_mv)
         turn_str="White" if board.side==WHITE else "Black"
         pname=wn if board.side==WHITE else bn
         chk_str="  *** CHECK ***" if board.in_check() else ""
+
+        # Clock display
+        if clock:
+            wt = _fmt_clock(clock, WHITE)
+            bt = _fmt_clock(clock, BLACK)
+            print(f"  ⏱  White: {wt}   Black: {bt}")
+            if clock.flag(WHITE):
+                print("  ⏰ White's time is up! Black wins on time!")
+                handle_game_end(board,elo_sys,wn,bn,winner_color=BLACK,elo_category=elo_category)
+                return
+            if clock.flag(BLACK):
+                print("  ⏰ Black's time is up! White wins on time!")
+                handle_game_end(board,elo_sys,wn,bn,winner_color=WHITE,elo_category=elo_category)
+                return
+
         print(f"  Move {board.fullmove} — {pname} ({turn_str}) to move{chk_str}")
         if board.san_log:
             pairs=[]
             for i in range(0,len(board.san_log),2):
                 pairs.append(f"{i//2+1}. {board.san_log[i]} {board.san_log[i+1] if i+1<len(board.san_log) else '...'}")
             print("  "+' | '.join(pairs[-4:]))
-        we=elo_sys.get_elo(wn); be=elo_sys.get_elo(bn)
-        print(f"  {wn}({we}) vs {bn}({be})\n")
+        we=elo_sys.get_elo(wn, elo_category); be=elo_sys.get_elo(bn, elo_category)
+        cat_label = elo_category.capitalize()
+        print(f"  [{cat_label}] {wn}({we}) vs {bn}({be})\n")
 
         legal=board.legal()
         if not legal:
             draw_board(board, persp, last_mv)
             if board.in_check():
                 winner=BLACK if board.side==WHITE else WHITE
-                handle_game_end(board,elo_sys,wn,bn,winner_color=winner)
+                handle_game_end(board,elo_sys,wn,bn,winner_color=winner,elo_category=elo_category)
             else:
-                handle_game_end(board,elo_sys,wn,bn,draw=True)
+                handle_game_end(board,elo_sys,wn,bn,draw=True,elo_category=elo_category)
             return
 
         for cond,msg in [(board.is_repetition(),"threefold repetition"),
@@ -5466,9 +7387,10 @@ def play_local_2p(elo_sys):
                          (board.insufficient_material(),"insufficient material")]:
             if cond:
                 print(f"  ½-½ Draw: {msg}")
-                handle_game_end(board,elo_sys,wn,bn,draw=True)
+                handle_game_end(board,elo_sys,wn,bn,draw=True,elo_category=elo_category)
                 return
 
+        if clock: clock.start(board.side)
         try:
             raw=input(f"  {pname}'s move: ").strip()
         except EOFError: return
@@ -5477,29 +7399,39 @@ def play_local_2p(elo_sys):
         if cmd in('quit','exit','q'): return
         if cmd=='help': print(HELP); continue
         if cmd=='flip': persp=1-persp; continue
-        if cmd=='elo': elo_sys.leaderboard(); continue
+        if cmd=='elo': elo_sys.leaderboard(category=elo_category); continue
+        if cmd=='pgn':
+            pgn = export_pgn(board.san_log, wn, bn, '*')
+            print(pgn); continue
+        if cmd=='replay':
+            replay_game(board.san_log, white_name=wn, black_name=bn); continue
         if cmd=='moves':
             sms=[board.san(m) for m in legal]
             for i in range(0,len(sms),8):
                 print("  "+"  ".join(f"{s:<8}" for s in sms[i:i+8]))
             print(); continue
         if cmd=='resign':
+            if clock: clock.stop(board.side)
             winner=BLACK if board.side==WHITE else WHITE
             print(f"  {pname} resigned.")
-            handle_game_end(board,elo_sys,wn,bn,winner_color=winner)
+            handle_game_end(board,elo_sys,wn,bn,winner_color=winner,elo_category=elo_category)
             return
         if cmd=='draw':
+            if clock: clock.stop(board.side)
             try:
                 other=bn if board.side==WHITE else wn
                 ans=input(f"  {other}: Accept draw? [y/N] ").strip().lower()
             except EOFError: ans='n'
             if ans in('y','yes'):
-                handle_game_end(board,elo_sys,wn,bn,draw=True); return
+                handle_game_end(board,elo_sys,wn,bn,draw=True,elo_category=elo_category); return
             print("  Draw declined."); continue
+        # Normalise move (accept e2e4, e2-e4, etc.)
+        raw = board._normalise_input(raw)
         mv=board.parse_san(raw)
         if mv is None:
             print(f"  Illegal/unrecognised: '{raw}'. Try 'moves' or 'help'.")
             continue
+        if clock: clock.stop(board.side)
         s=board.san(mv); board.make(mv); board.san_log.append(s); last_mv=mv
 
 # ════════════════════════════════════════════════════════════════════════
@@ -5656,42 +7588,244 @@ def play_network(elo_sys, net, our_color):
 #  MAIN MENU
 # ════════════════════════════════════════════════════════════════════════
 MAIN_MENU_ONLINE = """
-  ┌─────────────────────────────────┐
-  │         MAIN MENU               │
-  ├─────────────────────────────────┤
-  │  1. Play vs AI                  │
-  │  2. Local 2-Player              │
-  │  3. Online Matchmaking          │
-  │  4. Account Management          │
-  │  5. ELO Leaderboard             │
-  │  6. Analyze a PGN line          │
-  │  7. Game Analysis (Online)      │
-  │  8. Friends & Messaging         │
-  │  9. Configure Server            │
-  │  L. Learn an Opening            │
-  │  0. Enable Offline Mode         │
-  │  Q. Quit                        │
-  └─────────────────────────────────┘
+  ┌──────────────────────────────────────────┐
+  │              MAIN MENU  v2.0             │
+  ├──────────────────────────────────────────┤
+  │  1.  Play vs AI                          │
+  │  2.  Local 2-Player                      │
+  │  3.  Online Matchmaking                  │
+  │  4.  Account Management                  │
+  │  5.  ELO Leaderboard                     │
+  │  6.  Analyze a PGN line                  │
+  │  7.  Game Analysis (Online)              │
+  │  8.  Friends & Messaging                 │
+  │  9.  Learn an Opening                    │
+  │  10. Daily Puzzle (Lichess)              │
+  │  11. Endgame Trainer                     │
+  │  12. Replay Saved Game                   │
+  │  13. PGN Import / Export                 │
+  │  14. Opening Explorer                    │
+  │  15. Opening Quiz                        │
+  │  16. Game Stats Dashboard                │
+  │  17. Settings                            │
+  │  18. Report a Bug                        │
+  │  19. Server Daily Puzzle                 │
+  │  20. Achievements                        │
+  │  21. Tournaments                         │
+  │  22. Lobby Chat                          │
+  │  0.  Enable Offline Mode                 │
+  │  Q.  Quit                                │
+  └──────────────────────────────────────────┘
 """
 
 MAIN_MENU_OFFLINE = """
-  ┌─────────────────────────────────┐
-  │         MAIN MENU               │
-  ├─────────────────────────────────┤
-  │  1. Play vs AI                  │
-  │  2. Local 2-Player              │
-  │  3. Online Matchmaking [OFFLINE]│
-  │  4. Account Management          │
-  │  5. ELO Leaderboard             │
-  │  6. Analyze a PGN line          │
-  │  7. Game Analysis (Online)      │
-  │  8. Friends & Messaging [OFFLINE]│
-  │  9. Configure Server            │
-  │  L. Learn an Opening            │
-  │  0. Enable Online Mode          │
-  │  Q. Quit                        │
-  └─────────────────────────────────┘
+  ┌──────────────────────────────────────────┐
+  │              MAIN MENU  v2.0             │
+  ├──────────────────────────────────────────┤
+  │  1.  Play vs AI                          │
+  │  2.  Local 2-Player                      │
+  │  3.  Online Matchmaking [OFFLINE]        │
+  │  4.  Account Management                  │
+  │  5.  ELO Leaderboard                     │
+  │  6.  Analyze a PGN line                  │
+  │  7.  Game Analysis (Online)              │
+  │  8.  Friends & Messaging [OFFLINE]       │
+  │  9.  Learn an Opening                    │
+  │  10. Daily Puzzle (Lichess)              │
+  │  11. Endgame Trainer                     │
+  │  12. Replay Saved Game                   │
+  │  13. PGN Import / Export                 │
+  │  14. Opening Explorer                    │
+  │  15. Opening Quiz                        │
+  │  16. Game Stats Dashboard                │
+  │  17. Settings                            │
+  │  18. Report a Bug                        │
+  │  19. Server Puzzle [OFFLINE]             │
+  │  20. Achievements [OFFLINE]              │
+  │  21. Tournaments [OFFLINE]               │
+  │  22. Lobby Chat [OFFLINE]               │
+  │  0.  Enable Online Mode                  │
+  │  Q.  Quit                                │
+  └──────────────────────────────────────────┘
 """
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  BUG REPORT SYSTEM
+# ════════════════════════════════════════════════════════════════════════
+_BUG_REPORT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'bug_reports.json')
+
+def _load_bug_reports():
+    """Load existing bug reports from file."""
+    if not os.path.exists(_BUG_REPORT_FILE):
+        return []
+    try:
+        with open(_BUG_REPORT_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+def _save_bug_reports(reports):
+    """Save bug reports to file."""
+    try:
+        with open(_BUG_REPORT_FILE, 'w', encoding='utf-8') as f:
+            json.dump(reports, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+def report_bug():
+    """
+    Interactive bug reporting tool.
+    Lets the player describe a bug and saves it to bug_reports.json.
+    If online, also submits it to the server.
+    """
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║                   REPORT A BUG                           ║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  Help improve ASCII Chess by reporting bugs or issues.   ║")
+    print("  ║  Reports are saved locally and (if online) sent to the   ║")
+    print("  ║  server. Press Enter to cancel at any time.              ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+
+    # Category selection
+    categories = [
+        "Gameplay / Rules",
+        "AI / Engine",
+        "Opening Book",
+        "UI / Display",
+        "Networking / Online",
+        "Crash / Error",
+        "Other",
+    ]
+    print("\n  Bug Category:")
+    for i, cat in enumerate(categories, 1):
+        print(f"    {i}. {cat}")
+    try:
+        cat_input = input("  Category [1-7]: ").strip()
+    except EOFError:
+        return
+    if not cat_input:
+        return
+    try:
+        cat_idx = int(cat_input) - 1
+        category = categories[cat_idx] if 0 <= cat_idx < len(categories) else "Other"
+    except ValueError:
+        category = "Other"
+
+    # Severity
+    severities = ["Low", "Medium", "High", "Critical"]
+    print("\n  Severity:")
+    for i, sev in enumerate(severities, 1):
+        print(f"    {i}. {sev}")
+    try:
+        sev_input = input("  Severity [1-4, default=2]: ").strip()
+    except EOFError:
+        return
+    if not sev_input:
+        severity = "Medium"
+    else:
+        try:
+            sev_idx = int(sev_input) - 1
+            severity = severities[sev_idx] if 0 <= sev_idx < len(severities) else "Medium"
+        except ValueError:
+            severity = "Medium"
+
+    # Title
+    try:
+        title = input("\n  Short title (one line): ").strip()
+    except EOFError:
+        return
+    if not title:
+        print("  Bug report cancelled.")
+        return
+
+    # Description
+    print("  Description (describe what happened vs what you expected).")
+    print("  Type 'END' on its own line when done, or press Enter twice:")
+    lines = []
+    try:
+        blank_count = 0
+        while True:
+            line = input("  > ")
+            if line.strip().upper() == 'END':
+                break
+            if line == '':
+                blank_count += 1
+                if blank_count >= 2:
+                    break
+                lines.append('')
+            else:
+                blank_count = 0
+                lines.append(line)
+    except EOFError:
+        pass
+    description = '\n'.join(lines).strip()
+    if not description:
+        description = "(No description provided)"
+
+    # Steps to reproduce (optional)
+    try:
+        steps = input("\n  Steps to reproduce (optional, press Enter to skip): ").strip()
+    except EOFError:
+        steps = ""
+
+    # Build the report
+    report = {
+        "id": int(time.time() * 1000),
+        "timestamp": datetime.now().isoformat(),
+        "username": _current_user or "(not logged in)",
+        "category": category,
+        "severity": severity,
+        "title": title,
+        "description": description,
+        "steps": steps,
+        "status": "open",
+        "submitted_to_server": False,
+    }
+
+    # Save locally
+    reports = _load_bug_reports()
+    reports.append(report)
+    saved = _save_bug_reports(reports)
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    if saved:
+        print("  ║  ✓ Bug report saved locally.                             ║")
+    else:
+        print("  ║  ✗ Could not save bug report locally.                    ║")
+
+    # Try to submit to server if online
+    global _server_conn
+    if not _offline_mode and _server_conn:
+        try:
+            _server_conn.send('BUG_REPORT', {
+                'id': report['id'],
+                'timestamp': report['timestamp'],
+                'username': report['username'],
+                'category': category,
+                'severity': severity,
+                'title': title,
+                'description': description,
+                'steps': steps,
+            })
+            resp = _server_conn.recv(timeout=5)
+            if resp and resp.get('success'):
+                report['submitted_to_server'] = True
+                _save_bug_reports(reports)
+                print("  ║  ✓ Bug report also submitted to server.                  ║")
+            else:
+                print("  ║  ○ Could not submit to server (saved locally only).       ║")
+        except Exception:
+            print("  ║  ○ Could not submit to server (saved locally only).       ║")
+    else:
+        print("  ║  ○ Offline — report saved locally only.                   ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+    print(f"\n  Report ID: {report['id']}")
+    print(f"  Category:  {category}  |  Severity: {severity}")
+    print(f"  Title:     {title}")
+    print()
+
 
 def learn_opening():
     """
@@ -5707,19 +7841,58 @@ def learn_opening():
         ("Ruy Lopez / Spanish", [
             {"name": "Main Line (Morphy)",
              "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O",
-             "desc": "The most classical opening. White fianchettos the bishop and aims for a powerful centre."},
+             "desc": "The classical main line. White retreats the bishop and prepares a powerful central break."},
             {"name": "Berlin Defence",
              "moves": "e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 d4 Nd6 Bxc6 dxc6 dxe5 Nf5",
-             "desc": "Solid and drawish. Black trades pawns for activity. Loved by world champions."},
+             "desc": "Solid and drawish. Black trades pawns for activity. Loved by world champions including Carlsen."},
             {"name": "Exchange Variation",
              "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Bxc6 dxc6 O-O f6 d4 exd4 Nxd4",
-             "desc": "White accepts doubled pawns for Black, then seeks a structural advantage."},
+             "desc": "White gives Black doubled c-pawns in exchange for a lasting structural edge."},
             {"name": "Marshall Attack",
              "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 O-O c3 d5",
-             "desc": "A pawn sacrifice by Black that leads to a fierce attack against White's king."},
+             "desc": "A pawn sacrifice by Black for a fierce king-hunt attack. Marshall's immortal idea."},
             {"name": "Schliemann Gambit",
              "moves": "e4 e5 Nf3 Nc6 Bb5 f5 Nc3 fxe4 Nxe4 d5",
-             "desc": "An aggressive counter-gambit. Black stakes everything on an early attack."},
+             "desc": "An aggressive counter-gambit. Black stakes everything on an early assault."},
+            {"name": "Chigorin Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Na5 Bc2 c5 d4 Qc7",
+             "desc": "Black reroutes the knight to a5 to attack the bishop. A rich positional fight over the centre."},
+            {"name": "Chigorin — cxd4 Line",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Na5 Bc2 c5 d4 cxd4 Nxd4 Nxb3 axb3",
+             "desc": "Black captures in the centre and exchanges the bishop. White gets open a-file and passed b-pawn potential."},
+            {"name": "Archangel Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O b5 Bb3 Bb7 d3 Be7",
+             "desc": "The Archangel! Black immediately plays …b5 and fianchettos the bishop. Dynamic counterplay on the long diagonal."},
+            {"name": "Neo-Archangel / Archangel Modern",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O b5 Bb3 Bb7 d3 Bc5 c3 d6 Nbd2 O-O",
+             "desc": "A refined version where Black develops the bishop to c5 for extra pressure. Popular in correspondence chess."},
+            {"name": "Breyer Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Nb8 d3 d6 c3 Nbd7",
+             "desc": "Black's knight retreats to reroute via d7. Deeply solid — a favourite of Spassky and Karpov."},
+            {"name": "Breyer — Bayonet",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 Nb8 d4 Nbd7 Nbd2 Bb7 Bc2 c5",
+             "desc": "White advances d4 and keeps the bishop on c2 for maximum pressure. A rich strategic battle."},
+            {"name": "Zaitsev Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Bb7 d4 Re8",
+             "desc": "Black fianchettos the bishop and prepares …Bf8 to free the position. Sharp and double-edged."},
+            {"name": "Rio Gambit",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Nxe4 Re1 Nc5 Nxe5 Nxe5 Rxe5+ Be7 Bf1 Nf6 d4 Ne6 d5",
+             "desc": "Black plays …Nxe4 early and White sacrifices tempo for the initiative. A tactical and underexplored line."},
+            {"name": "Keres Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O d4 Bg4 d5 Na5 Bc2 c6",
+             "desc": "Black pins the f3-knight and targets the centre. White advances d5 to cramp Black's queenside."},
+            {"name": "Open Ruy Lopez",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Nxe4 d4 b5 Bb3 d5 dxe5 Be6",
+             "desc": "Black sacrifices a pawn to open the centre. A sharp, theory-heavy battleground."},
+            {"name": "Steinitz Defence",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 d6 c3 Bd7 d4 Nge7 O-O Ng6 Re1",
+             "desc": "A solid but passive defence. Black keeps the knight on c6 and prepares a solid structure."},
+            {"name": "Cozio Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 Nge7 O-O g6 c3 a6 Ba4 Bg7 d4",
+             "desc": "Black plays …Nge7 to avoid the pin and prepares a kingside fianchetto. Unusual and tricky."},
+            {"name": "Classical (…Bc5)",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Nc3 Nxe4 O-O Bxc3 bxc3 d5",
+             "desc": "Black develops the bishop to c5 immediately. A rich classical battle with dynamic imbalances."},
         ]),
         ("Italian / Giuoco Piano", [
             {"name": "Giuoco Piano",
@@ -5890,6 +8063,270 @@ def learn_opening():
             {"name": "Benko Gambit",
              "moves": "d4 Nf6 c4 c5 d5 b5 cxb5 a6 bxa6 Bxa6 Nc3 d6 Nf3 g6 g3 Bg7 Bg2 O-O O-O Nbd7",
              "desc": "Black sacrifices two pawns for long-term queenside pressure."},
+        ]),
+        ("Polish Opening (1.b4)", [
+            {"name": "Main Line vs e5",
+             "moves": "b4 e5 Bb2 f6 b5 d5 e3 Be6 Nf3 Nd7 d4 dxe4 Nd2 Bd5 c4",
+             "desc": "White's offbeat flank opening. The Bb2 bishop eyes the long diagonal toward e5."},
+            {"name": "Polish Gambit",
+             "moves": "b4 e5 Bb2 Bxb4 Bxe5 Nf6 c4 O-O Nf3 d6 Bg3 Nc6",
+             "desc": "White sacrifices a pawn but gains active piece play and control of the centre."},
+            {"name": "Polish vs d5",
+             "moves": "b4 d5 Bb2 Nf6 e3 Bf5 Nf3 e6 Be2 Nbd7 O-O Bd6",
+             "desc": "Against a central response, White maintains queenside pressure with Bb2."},
+            {"name": "King's Indian Setup vs Polish",
+             "moves": "b4 Nf6 Bb2 g6 b5 Bg7 e3 d6 d4 O-O Nf3 Nbd7 Be2",
+             "desc": "Black ignores the wing thrust and builds a solid King's Indian formation."},
+            {"name": "Polish vs c6 — Queenside Battle",
+             "moves": "b4 c6 Bb2 a5 b5 cxb5 e4 e6 Bxb5 Nf6 Nf3 Be7 O-O O-O",
+             "desc": "A queenside pawn battle. White aims to exploit the advanced b-pawn."},
+        ]),
+        ("English Opening (1.c4)", [
+            {"name": "Symmetrical English",
+             "moves": "c4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nf3 e6 O-O Nge7 d4 cxd4 Nxd4 O-O",
+             "desc": "Black mirrors White's setup. A flexible system with rich positional play."},
+            {"name": "Reversed Sicilian",
+             "moves": "c4 e5 Nc3 Nf6 Nf3 Nc6 g3 d5 cxd5 Nxd5 Bg2 Nb6 O-O Be7",
+             "desc": "White plays a Sicilian with an extra tempo. Dynamic and double-edged."},
+            {"name": "Four Knights English",
+             "moves": "c4 e5 Nc3 Nf6 Nf3 Nc6 g3 Bb4 Bg2 O-O O-O Re8 d3 Bxc3",
+             "desc": "A solid positional battle. Black's bishop pair is traded for knight activity."},
+            {"name": "Anglo-Indian Defence",
+             "moves": "c4 Nf6 Nc3 e6 Nf3 d5 d4 Be7 Bg5 h6 Bh4 O-O e3 b6",
+             "desc": "Black builds a Queen's Indian-like setup. Solid and flexible."},
+            {"name": "Mikenas-Carls Variation",
+             "moves": "c4 Nf6 Nc3 e6 e4 d5 e5 d4 exf6 dxc3 bxc3 Qxf6 d4 e5",
+             "desc": "A sharp pawn sacrifice. White gains the centre and attacking chances."},
+            {"name": "King's English",
+             "moves": "c4 e5 g3 Nf6 Bg2 d5 cxd5 Nxd5 Nc3 Nb6 Nf3 Nc6 O-O Be7",
+             "desc": "White fianchettos and keeps the position flexible; a rich strategic battle."},
+            {"name": "Anglo-Grünfeld",
+             "moves": "c4 Nf6 Nc3 d5 cxd5 Nxd5 g3 g6 Bg2 Nxc3 bxc3 Bg7 Nf3 O-O O-O c5",
+             "desc": "A Grünfeld-like set-up from the English move order."},
+        ]),
+        ("Sicilian — Rossolimo & Moscow", [
+            {"name": "Rossolimo (Bb5)",
+             "moves": "e4 c5 Nf3 Nc6 Bb5 g6 Bxc6 dxc6 d3 Bg7 h3 Nf6 Nc3 O-O Be3",
+             "desc": "White avoids heavy Sicilian theory. The doubled c-pawns limit Black's centre."},
+            {"name": "Rossolimo (…e6 system)",
+             "moves": "e4 c5 Nf3 Nc6 Bb5 e6 O-O Nge7 Re1 a6 Bf1 d5 exd5 exd5 d4",
+             "desc": "Black challenges the centre; White keeps pressure with the bishop pair."},
+            {"name": "Moscow Variation (…Bd7)",
+             "moves": "e4 c5 Nf3 d6 Bb5+ Bd7 Bxd7+ Qxd7 c4 Nc6 Nc3 Nf6 d4 cxd4 Nxd4",
+             "desc": "White exchanges the bishop early; a Maroczy Bind-like position arises."},
+            {"name": "Moscow (…Nc6)",
+             "moves": "e4 c5 Nf3 d6 Bb5+ Nc6 O-O Bd7 Re1 Nf6 c3 a6 Bf1 Bg4 h3 Bh5",
+             "desc": "Black develops naturally and keeps options in the centre."},
+        ]),
+        ("Sicilian — Smith-Morra, Grand Prix & Alapin", [
+            {"name": "Smith-Morra Gambit",
+             "moves": "e4 c5 d4 cxd4 c3 dxc3 Nxc3 Nc6 Nf3 d6 Bc4 e6 O-O Nf6 Qe2 Be7 Rd1",
+             "desc": "White sacrifices a pawn for fast development and an IQP attack."},
+            {"name": "Grand Prix Attack",
+             "moves": "e4 c5 Nc3 Nc6 f4 g6 Nf3 Bg7 Bc4 e6 f5 exf5 exf5 d5 Bb3 Nge7",
+             "desc": "White launches an early kingside attack with f4–f5."},
+            {"name": "Alapin (2.c3) — Nf6 line",
+             "moves": "e4 c5 c3 Nf6 e5 Nd5 d4 cxd4 Nf3 Nc6 cxd4 d6 Bc4 Nb6 Bb3 dxe5",
+             "desc": "A solid anti-Sicilian. White builds a centre, Black seeks quick counter-play."},
+            {"name": "Alapin (2.c3) — d5 line",
+             "moves": "e4 c5 c3 d5 exd5 Qxd5 d4 Nc6 Nf3 Bg4 Be2 cxd4 cxd4 e6 Nc3 Bb4",
+             "desc": "Black stakes out d5 immediately; the game often becomes an IQP battle."},
+        ]),
+        ("Slav & Semi-Slav", [
+            {"name": "Slav Defence",
+             "moves": "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 a4 Bf5 e3 e6 Bxc4 Bb4 O-O Nbd7",
+             "desc": "Black supports d5 solidly. A first-rate choice at the highest levels."},
+            {"name": "Semi-Slav / Meran",
+             "moves": "d4 d5 c4 c6 Nc3 Nf6 Nf3 e6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 a6 e4",
+             "desc": "One of the most dynamically complex openings in chess. Wild pawn play."},
+            {"name": "Moscow Variation (Slav)",
+             "moves": "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 e3 b5 a4 b4 Ne4 Ba6 Nxf6+ exf6",
+             "desc": "White sacrifices a piece for positional compensation on the queenside."},
+            {"name": "Anti-Moscow Gambit",
+             "moves": "d4 d5 c4 c6 Nf3 Nf6 Nc3 e6 Bg5 h6 Bh4 dxc4 e4 g5 Bg3 b5",
+             "desc": "An ultra-sharp gambit where Black grabs pawns and White gets piece activity."},
+        ]),
+        ("Tarrasch & Semi-Tarrasch", [
+            {"name": "Tarrasch Defence",
+             "moves": "d4 d5 c4 e6 Nc3 c5 cxd5 exd5 Nf3 Nc6 g3 Nf6 Bg2 Be7 O-O O-O Bg5",
+             "desc": "Black accepts an IQP for free development and active piece play."},
+            {"name": "Semi-Tarrasch",
+             "moves": "d4 Nf6 c4 e6 Nf3 d5 Nc3 c5 cxd5 Nxd5 e3 Nc6 Bd3 Be7 O-O O-O",
+             "desc": "A flexible IQP structure. Black has fewer weaknesses than in the full Tarrasch."},
+        ]),
+        ("Réti Opening", [
+            {"name": "Réti Gambit",
+             "moves": "Nf3 d5 c4 dxc4 e3 Nf6 Bxc4 e6 O-O c5 d4",
+             "desc": "White regains the pawn with a Catalan-like initiative."},
+            {"name": "King's Indian Réti",
+             "moves": "Nf3 Nf6 c4 g6 g3 Bg7 Bg2 O-O O-O d6 d4 Nc6 Nc3 a6 d5 Na5 Nd2 c5",
+             "desc": "A King's Indian pawn structure from a Réti move order."},
+            {"name": "Réti vs d5 (slow build)",
+             "moves": "Nf3 d5 g3 Nf6 Bg2 e6 O-O Be7 d3 O-O Nbd2 c5 c3 Nc6 Re1 b5",
+             "desc": "White adopts a patient fianchetto strategy and waits for the right moment."},
+            {"name": "Zukertort Attack",
+             "moves": "Nf3 d5 b3 Nf6 Bb2 Bf5 g3 e6 Bg2 Be7 O-O O-O d3 c5 Nbd2",
+             "desc": "An old-fashioned yet solid hyper-modern set-up from 1.Nf3."},
+        ]),
+        ("Benoni & Benko — Advanced", [
+            {"name": "Taimanov Benoni",
+             "moves": "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 Nf3 g6 Nd2 Bg7 e4 O-O Be2",
+             "desc": "A flexible move order leading to a blocked Benoni centre."},
+            {"name": "Czech Benoni",
+             "moves": "d4 Nf6 c4 c5 d5 e5 Nc3 d6 e4 Be7 Nge2 O-O Ng3 Ne8 Be2 g6",
+             "desc": "Black closes the centre with …e5. Very solid but slightly cramped."},
+            {"name": "Blumenfeld Gambit",
+             "moves": "d4 Nf6 c4 e6 Nf3 c5 d5 b5 dxe6 fxe6 cxb5 d5 Nc3 Bd6 e4 dxe4",
+             "desc": "Black sacrifices a pawn for an open game and piece activity."},
+            {"name": "Benko Gambit — Fianchetto",
+             "moves": "d4 Nf6 c4 c5 d5 b5 cxb5 a6 bxa6 g6 Nc3 Bxa6 Nf3 d6 g3 Bg7 Bg2",
+             "desc": "White fianchettos and keeps the position slightly more solid."},
+        ]),
+        ("Nimzowitsch & Larsen Attacks", [
+            {"name": "Nimzowitsch-Larsen (1.b3)",
+             "moves": "b3 e5 Bb2 Nc6 e3 Nf6 Nf3 e4 Nd4 Bc5 Nxc6 dxc6 d4 exd3 Bxd3",
+             "desc": "A hyper-modern flank opening. White pressures the centre from the outside."},
+            {"name": "Larsen's Opening (1.b3 vs d5)",
+             "moves": "Nf3 d5 b3 c5 Bb2 Nc6 e3 Nf6 Bb5 Bg4 h3 Bh5 O-O e6 d4",
+             "desc": "A Réti-Larsen hybrid. White builds pressure on the long diagonal."},
+        ]),
+        ("Ponziani, Bishop's & Vienna — Extended", [
+            {"name": "Ponziani Opening",
+             "moves": "e4 e5 Nf3 Nc6 c3 d5 Qa4 Nf6 Nxe5 Bd6 Nxc6 bxc6 d3 O-O Be2",
+             "desc": "An old gambit line. White has to be careful but gets rich play."},
+            {"name": "Ponziani — Nf6 counter-attack",
+             "moves": "e4 e5 Nf3 Nc6 c3 Nf6 d4 Nxe4 d5 Ne7 Nxe5 d6 Nxf7 Kxf7 dxe6+ Kxe6",
+             "desc": "Black counter-attacks immediately with …Nf6 for sharp complications."},
+            {"name": "Bishop's Opening",
+             "moves": "e4 e5 Bc4 Nf6 d3 c6 Nf3 d5 Bb3 Bd6 Nc3 O-O O-O",
+             "desc": "A flexible approach avoiding the main lines of the Italian/Spanish."},
+            {"name": "Vienna Gambit",
+             "moves": "e4 e5 Nc3 Nf6 f4 d5 fxe5 Nxe4 Qf3 Nc6 Bb5 Nd4 Qxe4+ Nxb5 Nxb5",
+             "desc": "White sacrifices a piece for a ferocious king-hunt."},
+        ]),
+        ("Petrov, Philidor & Centre Game", [
+            {"name": "Petrov — Classical",
+             "moves": "e4 e5 Nf3 Nf6 Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Nc6 O-O Be7 Re1 Bg4",
+             "desc": "One of the most solid responses to 1.e4. Black equalises comfortably."},
+            {"name": "Petrov — Three Knights",
+             "moves": "e4 e5 Nf3 Nf6 Nc3 Nc6 Bb5 Nd4 Nxd4 exd4 Nd5 Nxd5 exd5 Qe7 Qe2",
+             "desc": "White tries for an early advantage; the game becomes sharp quickly."},
+            {"name": "Philidor Defence",
+             "moves": "e4 e5 Nf3 d6 d4 Nf6 Nc3 Nbd7 Bc4 Be7 O-O O-O Re1",
+             "desc": "Black keeps a solid pawn structure but is slightly cramped."},
+            {"name": "Centre Game",
+             "moves": "e4 e5 d4 exd4 Qxd4 Nc6 Qe3 Nf6 Nc3 Bb4 Bd2 O-O O-O-O Re8",
+             "desc": "White develops the queen early; Black gets easy equality."},
+            {"name": "Danish Gambit",
+             "moves": "e4 e5 d4 exd4 c3 dxc3 Bc4 cxb2 Bxb2 d5 Bxd5 Nf6 Nc3 Bb4 Ne2",
+             "desc": "A double pawn sacrifice for a huge development lead. Romantic and fun!"},
+        ]),
+        ("Miscellaneous & Offbeat", [
+            {"name": "Bird's Opening",
+             "moves": "f4 d5 Nf3 Nf6 e3 g6 Be2 Bg7 O-O O-O d3 c5 Qe1 Nc6 Qh4",
+             "desc": "White controls e5 and targets the kingside. An underrated weapon."},
+            {"name": "Grob Attack (1.g4)",
+             "moves": "g4 d5 Bg2 Bxg4 c4 c3 Qb3 Bd7 Nf3 Nf6",
+             "desc": "An ultra-aggressive and unorthodox first move. Best for surprise value."},
+            {"name": "Modern Defence",
+             "moves": "e4 g6 d4 Bg7 Nc3 d6 f4 Nf6 Nf3 O-O Bd3 Na6 O-O c5 d5 Rb8",
+             "desc": "Black hyper-modernly allows White a big centre and then attacks it."},
+            {"name": "Pirc — Austrian Attack",
+             "moves": "e4 d6 d4 Nf6 Nc3 g6 f4 Bg7 Nf3 c5 dxc5 Qa5 Bd3 Qxc5 Qe2 O-O Be3",
+             "desc": "White builds a huge centre and storms the kingside. Very sharp."},
+            {"name": "Latvian Gambit",
+             "moves": "e4 e5 Nf3 f5 Nxe5 Qf6 Nc4 fxe4 Nc3 Qf7 Ne3 c6 d4 exd3 Bxd3 d5",
+             "desc": "An aggressive counter-gambit. Black sacrifices material for an attack."},
+            {"name": "Halloween Gambit",
+             "moves": "e4 e5 Nf3 Nc6 Nc3 Nf6 Nxe5 Nxe5 d4 Nc6 d5 Ne5 f4 Ng6 e5 Ng8",
+             "desc": "A wild knight sacrifice on move 4. White gets a crushing attack or loses quickly."},
+        ]),
+        # ── New categories ─────────────────────────────────────────────────
+        ("Queen's Indian Defence", [
+            {"name": "Classical (4.g3)",
+             "moves": "d4 Nf6 c4 e6 Nf3 b6 g3 Bb7 Bg2 Be7 O-O O-O Nc3 Ne4 Qc2 Nxc3 Qxc3 f5",
+             "desc": "White fianchettos and prepares a long-term positional squeeze."},
+            {"name": "Petrosian System (4.a3)",
+             "moves": "d4 Nf6 c4 e6 Nf3 b6 a3 Bb7 Nc3 d5 cxd5 Nxd5 Qc2 Nxc3 bxc3 Be7 e4",
+             "desc": "White prevents …Bb4 and builds an imposing centre. Named for the iron defender."},
+            {"name": "Nimzo-Indian move order",
+             "moves": "d4 Nf6 c4 e6 Nf3 b6 Nc3 Bb4 Bg5 Bb7 e3 h6 Bh4 Bxc3+ bxc3 d6",
+             "desc": "Black plays …Bb4 to force doubled pawns, then fianchettos the bishop."},
+            {"name": "Miles Variation",
+             "moves": "d4 Nf6 c4 e6 Nf3 b6 Bf4 Bb7 e3 Be7 h3 O-O Bd3 c5 dxc5 bxc5 O-O Nc6",
+             "desc": "White develops quickly and keeps queenside tension. Practical and solid."},
+        ]),
+        ("Catalan Opening", [
+            {"name": "Open Catalan",
+             "moves": "d4 Nf6 c4 e6 g3 d5 Bg2 dxc4 Nf3 a6 O-O Nc6 Qc2 Be7 Qxc4 O-O",
+             "desc": "Black accepts the pawn then releases it. The g2-bishop exerts long-term pressure."},
+            {"name": "Closed Catalan",
+             "moves": "d4 Nf6 c4 e6 g3 d5 Bg2 Be7 Nf3 O-O O-O dxc4 Qc2 a6 Qxc4 b5 Qc2 Bb7",
+             "desc": "Black keeps the centre closed. A rich strategic game often reaching favourable endgames."},
+            {"name": "Catalan with …c6",
+             "moves": "d4 d5 c4 c6 g3 Nf6 Bg2 Bf5 Nf3 e6 O-O Be7 b3 O-O Bb2 Nbd7",
+             "desc": "Black combines the Slav structure with the Catalan setup for solid equality."},
+        ]),
+        ("Trompowsky Attack", [
+            {"name": "Trompowsky Main (…d5)",
+             "moves": "d4 Nf6 Bg5 d5 Bxf6 exf6 e3 c6 Bd3 Bd6 Ne2 O-O Nd2 Re8",
+             "desc": "White immediately pins the knight. Black gets the bishop pair and solid structure."},
+            {"name": "Trompowsky (…Ne4)",
+             "moves": "d4 Nf6 Bg5 Ne4 Bf4 c5 f3 Qa5+ c3 Nf6 d5 e6 e4 exd5 exd5 d6",
+             "desc": "Black immediately challenges the bishop with …Ne4. Sharp and double-edged."},
+            {"name": "Trompowsky (…e6)",
+             "moves": "d4 Nf6 Bg5 e6 e4 h6 Bxf6 Qxf6 Nc3 d6 Qd2 a6 O-O-O Nd7 f4",
+             "desc": "Black accepts the doubled pawns but gets open lines for counterplay."},
+        ]),
+        ("London System — Extended", [
+            {"name": "London vs KID (Classical)",
+             "moves": "d4 Nf6 Bf4 e6 e3 d5 Nf3 c5 c3 Nc6 Nbd2 Bd6 Bg3 O-O Bd3",
+             "desc": "A reliable setup for White. The Bg3 prevents …Ne4 and keeps the structure solid."},
+            {"name": "London — Torre Attack hybrid",
+             "moves": "d4 Nf6 Nf3 e6 Bg5 d5 e3 Be7 Nbd2 O-O Bd3 c5 c3 b6 O-O Bb7",
+             "desc": "White pins the knight with Bg5 in the London structure. Flexible and solid."},
+            {"name": "London — King's Indian Refusal",
+             "moves": "d4 Nf6 Bf4 g6 Nc3 d5 e3 Bg7 h4 h6 Be2 O-O Nf3 c5 dxc5 Qa5 Nd2",
+             "desc": "White meets the King's Indian setup with h4, aiming for early queenside play."},
+            {"name": "London — Accelerated (2.Bf4)",
+             "moves": "d4 d5 Bf4 c5 e3 Nc6 c3 Qb6 Qb3 c4 Qxb6 axb6 Nd2 e6 Ngf3 Bd6",
+             "desc": "White rushes the bishop out early for maximum simplicity."},
+        ]),
+        ("Sicilian — Dragon & Accelerated", [
+            {"name": "Yugoslav Attack (Dragon)",
+             "moves": "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 O-O Qd2 Nc6 O-O-O d5",
+             "desc": "One of the most violent openings in chess. White attacks the king, Black counterattacks."},
+            {"name": "Dragon — Classical",
+             "moves": "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be2 Bg7 O-O O-O Be3 Nc6 Nb3",
+             "desc": "White castles kingside and plays more quietly. The game remains strategically rich."},
+            {"name": "Accelerated Dragon",
+             "moves": "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6 c4 Bg7 Be3 Nf6 Nc3 d6 Be2 O-O O-O",
+             "desc": "Black achieves the Dragon structure without playing …d6 first, avoiding the Yugoslav."},
+            {"name": "Maroczy Bind",
+             "moves": "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6 c4 Bg7 Be3 Nf6 Nc3 d6 Be2 O-O O-O",
+             "desc": "White clamps the centre with c4. Black must find active counterplay or suffer."},
+        ]),
+        ("Vienna Game — Extended", [
+            {"name": "Vienna — Falkbeer Variation",
+             "moves": "e4 e5 Nc3 Nf6 Bc4 Nc6 d3 Na5 Bb5 c6 Ba4 b5 Bb3 Nxb3 axb3 d6 Nf3",
+             "desc": "A slow strategic battle. Black tries to trade off White's dark-squared bishop."},
+            {"name": "Vienna — Stanley Variation",
+             "moves": "e4 e5 Nc3 Nc6 Bc4 Bc5 Qg4 Qf6 Nd5 Qxf2+ Kd1 Kf8 Nf3 h6 d3",
+             "desc": "Wild complications arise after Qg4. Not for the faint-hearted!"},
+            {"name": "Vienna — Steinitz Variation",
+             "moves": "e4 e5 Nc3 Nf6 g3 d5 exd5 Nxd5 Bg2 Nxc3 bxc3 Nc6 Nf3 Bc5 O-O O-O d3",
+             "desc": "White fianchettos and keeps the position solid. Strategic play."},
+        ]),
+        ("Alekhine's Defence", [
+            {"name": "Four Pawns Attack",
+             "moves": "e4 Nf6 e5 Nd5 d4 d6 c4 Nb6 f4 dxe5 fxe5 Nc6 Nf3 Bf5 Be2 e6 O-O",
+             "desc": "White builds a giant pawn centre; Black must undermine it rapidly or be crushed."},
+            {"name": "Exchange Variation",
+             "moves": "e4 Nf6 e5 Nd5 d4 d6 exd6 exd6 Nf3 Nc6 Be2 Be7 O-O O-O c4 Nf6",
+             "desc": "White exchanges the e5 pawn for a small but enduring spatial advantage."},
+            {"name": "Modern Variation",
+             "moves": "e4 Nf6 e5 Nd5 d4 d6 Nf3 g6 Bc4 Nb6 Bb3 Bg7 Nbd2 Nc6 O-O dxe5 dxe5",
+             "desc": "A solid modern treatment. Black fianchettos and pressures e5."},
         ]),
     ]
 
@@ -6137,7 +8574,1434 @@ def _show_drill_result(total, errors):
     print(f"  ────────────────────────────────────────────────")
 
 
+# Puzzle trainer removed — solutions were invalid. Use Lichess.org for verified puzzles.
 
+def _placeholder_removed():
+    pass
+
+
+def _get_all_puzzles_REMOVED():
+    """Puzzle trainer removed — solutions were invalid. Use Lichess.org for verified puzzles."""
+    return [
+        # ─── MATE IN 1 ────────────────────────────────────────────────────
+        {
+            "id": 1, "title": "Mate in 1 — Back Rank",
+            "theme": "Mate in 1 / Back Rank",
+            "fen":   "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1",
+            "moves": ["Rd8#"],
+            "hint":  "Rooks love open files and the 8th rank…",
+        },
+        {
+            "id": 2, "title": "Mate in 1 — Queen & Rook",
+            "theme": "Mate in 1",
+            "fen":   "r4rk1/ppp2ppp/8/3Q4/8/8/PPP2PPP/4RRK1 w - - 0 1",
+            "moves": ["Qd8#"],
+            "hint":  "The queen can deliver check along the d-file.",
+        },
+        {
+            "id": 3, "title": "Mate in 1 — Smothered",
+            "theme": "Mate in 1 / Smothered",
+            "fen":   "6rk/6pp/7N/8/8/8/8/6K1 w - - 0 1",
+            "moves": ["Nf7#"],
+            "hint":  "The knight can land on a square where the king has no escape.",
+        },
+        {
+            "id": 4, "title": "Mate in 1 — Pin & Mate",
+            "theme": "Mate in 1",
+            "fen":   "5rk1/pppp1Bpp/8/8/8/8/PPPP2PP/6K1 w - - 0 1",
+            "moves": ["Bxg8#"],
+            "hint":  "The bishop captures the rook delivering checkmate.",
+        },
+        {
+            "id": 5, "title": "Mate in 1 — Rook & King",
+            "theme": "Mate in 1",
+            "fen":   "7k/8/6K1/8/8/8/8/7R w - - 0 1",
+            "moves": ["Rh7#"],
+            "hint":  "The rook cuts off the last rank with king support.",
+        },
+        # ─── MATE IN 2 ────────────────────────────────────────────────────
+        {
+            "id": 6, "title": "Mate in 2 — Arabian Mate",
+            "theme": "Mate in 2 / Arabian Mate",
+            "fen":   "5rk1/5Npp/8/8/8/8/8/R5K1 w - - 0 1",
+            "moves": ["Nh6+", "Kh8", "Ra8#"],
+            "hint":  "The knight covers key flight squares for the rook to deliver mate.",
+        },
+        {
+            "id": 7, "title": "Mate in 2 — Queen Sacrifice",
+            "theme": "Mate in 2 / Sacrifice",
+            "fen":   "r1b1kb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1",
+            "moves": ["Qxf7+", "Kxf7", "Bxe6#"],
+            "hint":  "Remove the defender with a forcing sacrifice.",
+        },
+        {
+            "id": 8, "title": "Mate in 2 — Corridor",
+            "theme": "Mate in 2 / Corridor",
+            "fen":   "8/8/8/8/8/5k2/5Q2/5K2 w - - 0 1",
+            "moves": ["Qa2+", "Ke3", "Qe6#"],
+            "hint":  "Drive the king to a mating square with checks.",
+        },
+        {
+            "id": 9, "title": "Mate in 2 — Double Check",
+            "theme": "Mate in 2",
+            "fen":   "r1b1k2r/pppp1ppp/2n2n2/2b5/2B1P3/2NP1N2/PPP2PPP/R1BQK2R b KQkq - 0 1",
+            "moves": ["Ng4", "O-O", "Nxf2"],
+            "hint":  "A knight leap forks king and rook.",
+        },
+        {
+            "id": 10, "title": "Mate in 2 — Rook Roller",
+            "theme": "Mate in 2",
+            "fen":   "6k1/8/6K1/8/8/8/8/R1R5 w - - 0 1",
+            "moves": ["Ra8+", "Kh7", "Rh1#"],
+            "hint":  "Two rooks take turns delivering check.",
+        },
+        # ─── MATE IN 3 ────────────────────────────────────────────────────
+        {
+            "id": 11, "title": "Mate in 3 — Smothered Mate",
+            "theme": "Mate in 3 / Smothered",
+            "fen":   "6rk/6pp/8/8/8/6N1/8/6K1 w - - 0 1",
+            "moves": ["Nf5", "g6", "Nh6", "Kh7", "Nf7#"],
+            "hint":  "The knight manoeuvres into position for a smothered mate.",
+        },
+        {
+            "id": 12, "title": "Mate in 3 — Anastasia's Mate",
+            "theme": "Mate in 3",
+            "fen":   "5rk1/pp1R1ppp/8/2p5/4P3/2N5/PP3PPP/6K1 w - - 0 1",
+            "moves": ["Rd8", "Rxd8", "Ne4", "Rd1", "Nf6#"],
+            "hint":  "Combine rook and knight for a back-rank mating net.",
+        },
+        # ─── TACTICAL THEMES ──────────────────────────────────────────────
+        {
+            "id": 13, "title": "Fork — Knight Fork",
+            "theme": "Tactics / Fork",
+            "fen":   "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 1",
+            "moves": ["Ng5", "d5", "Nxf7"],
+            "hint":  "Find the knight leap that wins material.",
+        },
+        {
+            "id": 14, "title": "Pin — Absolute Pin",
+            "theme": "Tactics / Pin",
+            "fen":   "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 1",
+            "moves": ["Ng4", "O-O", "Nxf2"],
+            "hint":  "Exploit the pin on the f3-knight.",
+        },
+        {
+            "id": 15, "title": "Skewer — Rook Skewer",
+            "theme": "Tactics / Skewer",
+            "fen":   "3k4/8/8/8/8/8/8/1R1K4 w - - 0 1",
+            "moves": ["Rb8+", "Kc7", "Rb7+"],
+            "hint":  "A skewer forces the king away, winning the piece behind.",
+        },
+        {
+            "id": 16, "title": "Discovered Attack",
+            "theme": "Tactics / Discovered Attack",
+            "fen":   "r2qkb1r/ppp2ppp/2np1n2/4p1B1/2B1P3/2NP4/PPP2PPP/R2QK2R w KQkq - 0 1",
+            "moves": ["Nd5", "Nxd5", "Bxd8"],
+            "hint":  "Move one piece to unleash an attack by a piece behind it.",
+        },
+        {
+            "id": 17, "title": "Deflection — Queen Deflection",
+            "theme": "Tactics / Deflection",
+            "fen":   "3rk3/8/8/4q3/8/4Q3/8/4RK2 w - - 0 1",
+            "moves": ["Qe5+", "Qxe5", "Re8#"],
+            "hint":  "Force the queen away from a key defensive duty.",
+        },
+        {
+            "id": 18, "title": "Zwischenzug — Intermediate Move",
+            "theme": "Tactics / Zwischenzug",
+            "fen":   "r1bq1rk1/ppp2ppp/2n2n2/3pp3/3P4/2NBPN2/PPP2PPP/R2QK2R b KQkq - 0 1",
+            "moves": ["e4", "Bxf6", "Qxd1+"],
+            "hint":  "Instead of recapturing, find the surprising in-between move!",
+        },
+        {
+            "id": 19, "title": "Overloading — Defender Overload",
+            "theme": "Tactics / Overloading",
+            "fen":   "4r1k1/pp3ppp/2p5/4q3/2B5/2Q5/PPP2PPP/4R1K1 w - - 0 1",
+            "moves": ["Rxe5", "Rxe5", "Qxc6"],
+            "hint":  "The defending rook is covering two things at once — exploit it.",
+        },
+        {
+            "id": 20, "title": "X-Ray Attack",
+            "theme": "Tactics / X-Ray",
+            "fen":   "3r4/8/8/8/8/8/8/3RK2k w - - 0 1",
+            "moves": ["Kf2", "Kh2", "Kg3", "Kg1", "Rd2"],
+            "hint":  "Use indirect pressure through your opponent's piece.",
+        },
+        # ─── ENDGAME PUZZLES ──────────────────────────────────────────────
+        {
+            "id": 21, "title": "Endgame — Lucena Position",
+            "theme": "Endgame / Rook",
+            "fen":   "1K1k4/1P6/8/8/8/8/r7/4R3 w - - 0 1",
+            "moves": ["Re4", "Ra1", "Kc7"],
+            "hint":  "Build a 'bridge' with your rook to shelter your king.",
+        },
+        {
+            "id": 22, "title": "Endgame — King & Pawn Opposition",
+            "theme": "Endgame / Pawn",
+            "fen":   "8/8/8/4k3/8/4K3/4P3/8 w - - 0 1",
+            "moves": ["Kd3", "Kd5", "e4+"],
+            "hint":  "Use the opposition to escort your pawn to promotion.",
+        },
+        {
+            "id": 23, "title": "Endgame — Passed Pawn Breakthrough",
+            "theme": "Endgame / Passed Pawn",
+            "fen":   "8/p1P5/Pp6/8/8/8/8/4K1k1 w - - 0 1",
+            "moves": ["c8=Q", "a5", "Qb7"],
+            "hint":  "Promote the c-pawn and use your queen to queen the a-pawn.",
+        },
+        {
+            "id": 24, "title": "Endgame — Queen vs Rook",
+            "theme": "Endgame / Queen",
+            "fen":   "8/8/8/8/3k4/8/8/3KQ3 w - - 0 1",
+            "moves": ["Qe4+", "Kc5", "Kc3"],
+            "hint":  "Coordinate king and queen to restrict the enemy king.",
+        },
+        {
+            "id": 25, "title": "Endgame — Rook Ending Cut-off",
+            "theme": "Endgame / Rook",
+            "fen":   "8/5k2/8/8/8/8/5P2/3RK3 w - - 0 1",
+            "moves": ["Rd7+", "Ke8", "Ke2"],
+            "hint":  "Cut off the king with your rook, then escort the pawn.",
+        },
+        # ─── OPENING TRAPS ────────────────────────────────────────────────
+        {
+            "id": 26, "title": "Trap — Fried Liver Attack",
+            "theme": "Opening Trap",
+            "fen":   "r1bqkb1r/ppp2ppp/2np4/4N3/2B5/8/PPPP1PPP/RNBQK2R w KQkq - 0 6",
+            "moves": ["Nxf7", "Kxf7", "Qf3+"],
+            "hint":  "Sacrifice the knight to open the king!",
+        },
+        {
+            "id": 27, "title": "Trap — Scholar's Mate Defense",
+            "theme": "Opening Trap",
+            "fen":   "rnbqkbnr/pppp1ppp/8/4p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR b KQkq - 3 3",
+            "moves": ["Nc6", "Qxf7+", "Ke7"],
+            "hint":  "Find the defense that avoids the scholar's mate and counterattacks.",
+        },
+        {
+            "id": 28, "title": "Trap — Budapest Gambit Trap",
+            "theme": "Opening Trap",
+            "fen":   "r1bqkb1r/pppp1ppp/5n2/4P3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 4",
+            "moves": ["Ne4", "Nd2", "Qh4+"],
+            "hint":  "A surprising queen fork forces material gain.",
+        },
+        # ─── COMBINATIONS ─────────────────────────────────────────────────
+        {
+            "id": 29, "title": "Combination — Greek Gift Sacrifice",
+            "theme": "Combination / Sacrifice",
+            "fen":   "r1bq1rk1/ppp2ppp/2n2n2/4p3/2BpP3/2N2N2/PPP2PPP/R1BQK2R w KQ - 0 7",
+            "moves": ["Bxf7+", "Rxf7", "Ng5"],
+            "hint":  "The bishop sacrifice on f7 forks king and rook, forcing a powerful follow-up.",
+        },
+        {
+            "id": 30, "title": "Combination — Windmill",
+            "theme": "Combination / Windmill",
+            "fen":   "r2q1rk1/ppp2p1p/2np1np1/2b1p1B1/2B1P3/2NP1N2/PPP2PPP/R2QK2R w KQ - 0 9",
+            "moves": ["Bxf6", "Bxf6", "Ng5"],
+            "hint":  "Set up a series of alternating discoveries.",
+        },
+    ]
+
+
+def puzzles_menu():
+    """Fetch and play today's Lichess daily puzzle (engine-verified, always correct)."""
+    import urllib.request, json as _json
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║              LICHESS DAILY PUZZLE                        ║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  Fetching today's puzzle from lichess.org...             ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+
+    # ── Fetch from Lichess public API ────────────────────────────────────
+    try:
+        req = urllib.request.Request(
+            'https://lichess.org/api/puzzle/daily',
+            headers={'Accept': 'application/json', 'User-Agent': 'TerminalChess/1.0'}
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"\n  Could not fetch puzzle (no internet?): {e}")
+        print("  Visit lichess.org/training for puzzles.")
+        try: input("  Press Enter to return...")
+        except EOFError: pass
+        return
+
+    # ── Parse response ────────────────────────────────────────────────
+    puzzle_data = data.get('puzzle', {})
+    game_data   = data.get('game', {})
+
+    fen        = puzzle_data.get('initialFen') or data.get('game', {}).get('fen', '')
+    solution   = puzzle_data.get('solution', [])   # list of UCI move strings
+    rating     = puzzle_data.get('rating', '?')
+    themes     = ', '.join(puzzle_data.get('themes', []))
+    puzzle_id  = puzzle_data.get('id', '?')
+    puzzle_url = f"https://lichess.org/training/{puzzle_id}"
+
+    if not fen or not solution:
+        print("\n  Could not parse puzzle data from Lichess response.")
+        try: input("  Press Enter to return...")
+        except EOFError: pass
+        return
+
+    # ── The FEN given is the position BEFORE the opponent's last move;
+    #    the first move in the solution list is the opponent's move we must
+    #    apply, then all subsequent moves alternate (ours, theirs, ours…).
+    board = _board_from_fen(fen)
+    if board is None:
+        print("  Could not load puzzle position.")
+        return
+
+    # Apply first move (opponent's "key" move that sets the puzzle)
+    def _uci_to_move(b, uci):
+        """Parse a UCI string like 'e2e4' or 'e7e8q' into a Move."""
+        if len(uci) < 4: return None
+        fr = s2sq(uci[:2]); to = s2sq(uci[2:4])
+        promo = None
+        if len(uci) == 5:
+            promo = {'q': QUEEN, 'r': ROOK, 'b': BISHOP, 'n': KNIGHT}.get(uci[4].lower())
+        for m in b.legal():
+            if m.from_sq == fr and m.to_sq == to:
+                if promo is None or getattr(m, 'promo', None) == promo:
+                    return m
+        return None
+
+    # Apply the "setup" move (first entry = what the opponent just played)
+    setup_uci = solution[0]
+    setup_m   = _uci_to_move(board, setup_uci)
+    if setup_m:
+        sn = board.san(setup_m)
+        board.make(setup_m)
+        board.san_log.append(sn)
+        print(f"\n  Opponent just played: {sn}")
+    your_moves = solution[1:]   # alternating: your move, their reply, your move…
+
+    persp    = board.side
+    side_str = "White" if board.side == WHITE else "Black"
+
+    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║  Lichess Daily Puzzle — {datetime.now().strftime('%d %B %Y'):<33}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  Rating : {rating:<47}║")
+    print(f"  ║  Themes : {themes[:47]:<47}║")
+    print(f"  ║  URL    : {puzzle_url:<47}║")
+    print(f"  ║  {side_str} to move{'':42}║")
+    print(f"  ╚══════════════════════════════════════════════════════════╝")
+
+    move_idx = 0
+    errors   = 0
+    last_mv  = setup_m
+
+    while move_idx < len(your_moves):
+        draw_board(board, persp, last_mv)
+
+        expected_uci = your_moves[move_idx]
+        expected_m   = _uci_to_move(board, expected_uci)
+        if expected_m is None:
+            print(f"  [Puzzle data issue] Cannot parse move {expected_uci}")
+            break
+
+        if move_idx % 2 == 1:
+            # Opponent's forced reply — play automatically
+            sn = board.san(expected_m)
+            board.make(expected_m)
+            board.san_log.append(sn)
+            last_mv = expected_m
+            print(f"\n  Opponent replies: {sn}\n")
+            move_idx += 1
+            continue
+
+        # Your turn
+        mn       = board.fullmove
+        notation = f"{mn}." if board.side == WHITE else f"{mn}..."
+        attempts = 0
+
+        while True:
+            try:
+                raw = input(f"  Your move ({notation} ?): ").strip()
+            except EOFError:
+                return
+            cmd = raw.lower()
+            if cmd in ('q', 'quit', 'exit', '0'):
+                return
+            if cmd == 'hint':
+                # Show destination square only
+                hint_sq = expected_uci[2:4]
+                print(f"  Hint: aim for {hint_sq}")
+                continue
+            if cmd == 'solution':
+                sol_sans = []
+                b2 = _board_from_fen(fen)
+                for uci in solution:
+                    m2 = _uci_to_move(b2, uci)
+                    if m2:
+                        sol_sans.append(b2.san(m2)); b2.make(m2)
+                print(f"  Solution: {' '.join(sol_sans)}")
+                try: input("  Press Enter to continue...")
+                except EOFError: pass
+                return
+
+            player_m = board.parse_san(board._normalise_input(raw))
+            if player_m is None:
+                print(f"  Illegal or unrecognised: '{raw}'. Try again.")
+                continue
+
+            if player_m == expected_m:
+                sn = board.san(player_m)
+                board.make(player_m)
+                board.san_log.append(sn)
+                last_mv = player_m
+                print(f"  ✓ Correct! {notation} {sn}\n")
+                move_idx += 1
+                break
+            else:
+                attempts += 1
+                if attempts == 1:
+                    print("  ✗ Not quite. Try again! (type 'hint' for a clue)")
+                else:
+                    errors += 1
+                    expected_san = board.san(expected_m)
+                    print(f"  ✗ The correct move was {expected_san}.")
+                    board.make(expected_m)
+                    board.san_log.append(expected_san)
+                    last_mv = expected_m
+                    move_idx += 1
+                    break
+
+    draw_board(board, persp, last_mv)
+    if errors == 0:
+        print(f"  ✓✓✓  Puzzle solved! Brilliant work! See it on Lichess: {puzzle_url}\n")
+    else:
+        print(f"  Puzzle complete ({errors} error(s)). Study it at: {puzzle_url}\n")
+
+    try:
+        input("  Press Enter to return...")
+    except EOFError:
+        pass
+
+
+def _board_from_fen(fen):
+    """Parse a FEN string into a Board object."""
+    try:
+        parts = fen.split()
+        rows  = parts[0].split('/')
+        board = Board()
+        board.sq = [None] * 64
+        _FEN_PIECE = {
+            'P': (WHITE, PAWN),   'N': (WHITE, KNIGHT), 'B': (WHITE, BISHOP),
+            'R': (WHITE, ROOK),   'Q': (WHITE, QUEEN),  'K': (WHITE, KING),
+            'p': (BLACK, PAWN),   'n': (BLACK, KNIGHT), 'b': (BLACK, BISHOP),
+            'r': (BLACK, ROOK),   'q': (BLACK, QUEEN),  'k': (BLACK, KING),
+        }
+        for rank_idx, row in enumerate(rows):
+            file_idx = 0
+            for ch in row:
+                if ch.isdigit():
+                    file_idx += int(ch)
+                elif ch in _FEN_PIECE:
+                    sq = (7 - rank_idx) * 8 + file_idx
+                    board.sq[sq] = _FEN_PIECE[ch]
+                    file_idx += 1
+        board.side = WHITE if (len(parts) < 2 or parts[1] == 'w') else BLACK
+        # Castling
+        cas_str = parts[2] if len(parts) > 2 else '-'
+        board.castling = 0
+        if 'K' in cas_str: board.castling |= 1
+        if 'Q' in cas_str: board.castling |= 2
+        if 'k' in cas_str: board.castling |= 4
+        if 'q' in cas_str: board.castling |= 8
+        # EP
+        ep_str = parts[3] if len(parts) > 3 else '-'
+        board.ep = s2sq(ep_str) if ep_str != '-' else None
+        board.halfmove  = int(parts[4]) if len(parts) > 4 else 0
+        board.fullmove  = int(parts[5]) if len(parts) > 5 else 1
+        board.history   = []
+        board.san_log   = []
+        board._rehash()
+        return board
+    except Exception:
+        return None
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  PGN IMPORT / EXPORT
+# ════════════════════════════════════════════════════════════════════════
+
+def export_pgn(san_log, white='White', black='Black', result='*',
+               event='Casual Game', site='Local', date=None):
+    """Convert a san_log list to a PGN string."""
+    if date is None:
+        date = datetime.now().strftime('%Y.%m.%d')
+    result_tag = '1-0' if result=='white' else ('0-1' if result=='black' else
+                 ('1/2-1/2' if result in ('draw','Draw') else result))
+    lines = [
+        f'[Event "{event}"]',
+        f'[Site "{site}"]',
+        f'[Date "{date}"]',
+        f'[White "{white}"]',
+        f'[Black "{black}"]',
+        f'[Result "{result_tag}"]',
+        '',
+    ]
+    tokens = []
+    for i, san in enumerate(san_log):
+        if i % 2 == 0:
+            tokens.append(f"{i//2 + 1}.")
+        tokens.append(san)
+    tokens.append(result_tag)
+    # Wrap at 80 chars
+    row = ''
+    for t in tokens:
+        if row and len(row) + 1 + len(t) > 79:
+            lines.append(row)
+            row = t
+        else:
+            row = (row + ' ' + t).lstrip()
+    if row:
+        lines.append(row)
+    return '\n'.join(lines) + '\n'
+
+
+def import_pgn(text):
+    """
+    Parse a PGN string.  Returns (headers_dict, san_list) or (None, None).
+    Handles basic PGN only — tags + movetext, no RAV (variations).
+    """
+    headers = {}
+    movetext_lines = []
+    in_moves = False
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            if in_moves and movetext_lines:
+                continue
+            in_moves = bool(movetext_lines)
+            continue
+        if line.startswith('['):
+            m = re.match(r'\[(\w+)\s+"(.*)"\]', line)
+            if m:
+                headers[m.group(1)] = m.group(2)
+        else:
+            in_moves = True
+            movetext_lines.append(line)
+
+    if not movetext_lines:
+        return None, None
+
+    movetext = ' '.join(movetext_lines)
+    # Remove comments { ... } and ( ... ) recursively
+    for _ in range(10):
+        movetext = re.sub(r'\{[^}]*\}', '', movetext)
+        movetext = re.sub(r'\([^()]*\)', '', movetext)
+    # Remove NAGs ($1 etc)
+    movetext = re.sub(r'\$\d+', '', movetext)
+    # Remove result token
+    movetext = re.sub(r'(1-0|0-1|1/2-1/2|\*)\s*$', '', movetext)
+    # Split into tokens, skip move numbers
+    tokens = movetext.split()
+    sans = []
+    for tok in tokens:
+        tok = tok.strip('.')
+        if not tok:
+            continue
+        if tok.isdigit():
+            continue
+        if tok in ('1-0', '0-1', '1/2-1/2', '*'):
+            break
+        # Skip if it's a move number like "12..."
+        if re.match(r'^\d+\.{0,3}$', tok):
+            continue
+        sans.append(tok)
+    # Validate on a board
+    b = Board(); b.reset()
+    valid = []
+    for san in sans:
+        m = b.parse_san(san)
+        if m is None:
+            break
+        sn = b.san(m)
+        b.make(m)
+        b.san_log.append(sn)
+        valid.append(sn)
+    return headers, valid
+
+
+def pgn_menu():
+    """PGN import/export menu."""
+    while True:
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║               PGN IMPORT / EXPORT                        ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  1. Export last saved game to PGN                        ║")
+        print("  ║  2. Import PGN and replay / analyze                      ║")
+        print("  ║  3. Export all saved games to PGN file                   ║")
+        print("  ║  0. Back                                                 ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+        try:
+            choice = input("  Choice: ").strip()
+        except EOFError:
+            return
+
+        if choice == '0':
+            return
+
+        elif choice == '1':
+            games = load_online_games(limit=1)
+            if not games:
+                print("  No saved games found.")
+                continue
+            g = games[0]
+            pgn = export_pgn(g.get('moves', []), g.get('white','White'),
+                             g.get('black','Black'), g.get('result','*'))
+            print("\n" + "─"*70)
+            print(pgn)
+            print("─"*70)
+            # Offer to save to file
+            try:
+                fn = input("  Save to file (leave blank to skip): ").strip()
+            except EOFError:
+                fn = ''
+            if fn:
+                try:
+                    with open(fn, 'w') as f:
+                        f.write(pgn)
+                    print(f"  ✓ Saved to {fn}")
+                except Exception as e:
+                    print(f"  Error: {e}")
+
+        elif choice == '2':
+            print("\n  Paste PGN below. Enter a blank line when done:")
+            lines = []
+            try:
+                while True:
+                    ln = input()
+                    if not ln.strip() and lines:
+                        blank_count = sum(1 for l in lines[-3:] if not l.strip())
+                        if blank_count >= 1:
+                            break
+                    lines.append(ln)
+            except EOFError:
+                pass
+            text = '\n'.join(lines)
+            if not text.strip():
+                # Try loading from file
+                try:
+                    fn = input("  Or enter a PGN filename: ").strip()
+                    with open(fn) as f:
+                        text = f.read()
+                except Exception as e:
+                    print(f"  Error: {e}"); continue
+
+            headers, san_list = import_pgn(text)
+            if not san_list:
+                print("  Could not parse PGN or no valid moves found.")
+                continue
+
+            white = headers.get('White', 'White') if headers else 'White'
+            black = headers.get('Black', 'Black') if headers else 'Black'
+            print(f"\n  Imported: {white} vs {black} — {len(san_list)} moves")
+            print("  1. Replay game")
+            print("  2. Analyze game")
+            print("  0. Cancel")
+            try:
+                sub = input("  Choice: ").strip()
+            except EOFError:
+                sub = '0'
+            if sub == '1':
+                replay_game(san_list, white_name=white, black_name=black)
+            elif sub == '2':
+                results = analyze_game(san_list, engine_time=1.0)
+                print_analysis(results)
+
+        elif choice == '3':
+            games = load_online_games(limit=100)
+            if not games:
+                print("  No saved games found.")
+                continue
+            try:
+                fn = input("  Output filename [chess_games.pgn]: ").strip() or 'chess_games.pgn'
+            except EOFError:
+                fn = 'chess_games.pgn'
+            try:
+                with open(fn, 'w') as f:
+                    for g in reversed(games):
+                        pgn = export_pgn(g.get('moves',[]), g.get('white','White'),
+                                         g.get('black','Black'), g.get('result','*'),
+                                         date=g.get('timestamp','')[:10].replace('-','.'))
+                        f.write(pgn + '\n')
+                print(f"  ✓ Exported {len(games)} games to {fn}")
+            except Exception as e:
+                print(f"  Error: {e}")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  GAME REPLAY VIEWER
+# ════════════════════════════════════════════════════════════════════════
+
+def replay_game(san_log, white_name='White', black_name='Black'):
+    """
+    Interactive game replay.
+    Commands:  →/n  next move   ←/p  prev move   g  goto N   q  quit
+    """
+    if not san_log:
+        print("  No moves to replay.")
+        return
+
+    # Build board snapshots (lightweight — store san_log prefix)
+    print(f"\n  Replaying: {white_name} vs {black_name}  ({len(san_log)} moves)")
+    print("  Commands: [n]ext  [p]rev  [g]oto N  [b]eginning  [e]nd  [q]uit\n")
+
+    cur = 0  # number of moves applied so far
+    persp = WHITE
+
+    def _build_board(n):
+        b = Board(); b.reset()
+        for s in san_log[:n]:
+            m = b.parse_san(s)
+            if m is None: break
+            sn = b.san(m); b.make(m); b.san_log.append(sn)
+        return b
+
+    while True:
+        b = _build_board(cur)
+        last = None
+        if cur > 0:
+            # reconstruct last move to highlight
+            b2 = _build_board(cur - 1)
+            lm = b2.parse_san(san_log[cur-1])
+            last = lm
+
+        draw_board(b, persp, last)
+
+        # Show move list context
+        if san_log:
+            start = max(0, cur - 4)
+            end = min(len(san_log), cur + 4)
+            pairs = []
+            for i in range(start // 2 * 2, end, 2):
+                wm = san_log[i] if i < len(san_log) else '...'
+                bm = san_log[i+1] if i+1 < len(san_log) else '...'
+                marker_w = '►' if i == cur - 1 else ' '
+                marker_b = '►' if i+1 == cur - 1 else ' '
+                pairs.append(f"{i//2+1}.{marker_w}{wm} {marker_b}{bm}")
+            print("  " + '  '.join(pairs))
+
+        pos_str = f"Position after move {cur}" if cur > 0 else "Starting position"
+        print(f"\n  {pos_str}  [{cur}/{len(san_log)}]")
+
+        try:
+            cmd = input("  > ").strip().lower()
+        except EOFError:
+            return
+
+        if cmd in ('q', 'quit', 'exit'):
+            return
+        elif cmd in ('n', '', 'next', 'f'):
+            if cur < len(san_log): cur += 1
+        elif cmd in ('p', 'prev', 'back', 'b'):
+            if cur == 0: pass
+            elif cmd == 'b': cur = 0
+            else: cur = max(0, cur - 1)
+        elif cmd == 'e':
+            cur = len(san_log)
+        elif cmd.startswith('g'):
+            try:
+                n = int(cmd[1:].strip() or input("  Go to move: ").strip())
+                cur = max(0, min(len(san_log), n * 2))
+            except (ValueError, EOFError):
+                print("  Invalid move number.")
+        elif cmd == 'flip':
+            persp = 1 - persp
+        elif cmd == 'a':
+            # Quick analysis from current position
+            remaining = san_log[cur:]
+            if remaining:
+                results = analyze_game(remaining, engine_time=0.5)
+                print_analysis(results)
+        else:
+            # Try as move number
+            try:
+                n = int(cmd)
+                cur = max(0, min(len(san_log), n * 2))
+            except ValueError:
+                print("  Commands: n p b e g<N> flip a(nalyze) q")
+
+
+def replay_saved_game_menu():
+    """Pick and replay a saved game."""
+    games = load_online_games(limit=20)
+    if not games:
+        print("  No saved games found. Play some games first!")
+        return
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║               GAME REPLAY                                ║")
+    print("  ╚══════════════════════════════════════════════════════════╝")
+    print(f"  {'#':<3} {'White':<15} {'Black':<15} {'Result':<8} {'Moves':<6}")
+    print("  " + "─"*52)
+    for i, g in enumerate(games, 1):
+        print(f"  {i:<3} {g.get('white','?')[:14]:<15} {g.get('black','?')[:14]:<15} "
+              f"{g.get('result','?'):<8} {len(g.get('moves',[])):<6}")
+    print()
+    try:
+        choice = input("  Game number (0 to cancel): ").strip()
+    except EOFError:
+        return
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(games):
+            g = games[idx]
+            replay_game(g.get('moves', []), g.get('white','White'), g.get('black','Black'))
+    except (ValueError, IndexError):
+        if choice != '0':
+            print("  Invalid choice.")
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  OPENING EXPLORER  (post-game: shows book deviation point)
+# ════════════════════════════════════════════════════════════════════════
+
+def opening_explorer(san_log, book=None):
+    """
+    Walk through the san_log and show:
+    - Which named opening / variation was played
+    - Where the game deviated from the book
+    - What book alternatives existed at each point
+    """
+    if book is None:
+        book = OpeningBook()
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║              OPENING EXPLORER                            ║")
+    print("  ╚══════════════════════════════════════════════════════════╝\n")
+
+    b = Board(); b.reset()
+    last_book_move = 0
+    deviated_at = None
+
+    for i, san in enumerate(san_log):
+        m = b.parse_san(san)
+        if m is None:
+            break
+        side = 'White' if b.side == WHITE else 'Black'
+        move_num = b.fullmove
+        notation = f"{move_num}." if b.side == WHITE else f"{move_num}..."
+
+        # Check book
+        book_moves = book.probe(b)
+        book_sans = [s for s, _ in book_moves]
+        in_book = san in book_sans
+
+        if in_book:
+            last_book_move = i + 1
+            status = '\033[96m📗 book\033[0m'
+        else:
+            if deviated_at is None:
+                deviated_at = i + 1
+            status = '     '
+
+        alt_str = ''
+        if book_moves and not in_book:
+            alts = ', '.join(book_sans[:3])
+            alt_str = f"  \033[90m(book had: {alts})\033[0m"
+
+        print(f"  {notation:<6} {san:<8} {status}{alt_str}")
+        sn = b.san(m); b.make(m); b.san_log.append(sn)
+
+        if i >= 19:  # Only show first 20 moves in explorer
+            if i == 19:
+                print("  ... (showing first 20 moves only)")
+            break
+
+    print()
+    if deviated_at is None:
+        print(f"  ✓ All {last_book_move} moves were book moves!")
+    else:
+        print(f"  📗 Book coverage: moves 1–{last_book_move}")
+        print(f"  ⚡ Deviated from book at move {deviated_at}")
+    print()
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  CHESS CLOCK
+# ════════════════════════════════════════════════════════════════════════
+
+class ChessClock:
+    """
+    Simple chess clock with increment support.
+    time_control: (minutes, increment_seconds)  e.g. (5, 3) = 5+3
+    """
+    def __init__(self, minutes=10, increment=0):
+        secs = minutes * 60
+        self.time = [float(secs), float(secs)]
+        self.increment = float(increment)
+        self._started = [None, None]
+        self._running = None  # which side's clock is running (0=W, 1=B)
+
+    def start(self, side):
+        """Start the clock for `side` (0=White, 1=Black)."""
+        self._running = side
+        self._started[side] = time.time()
+
+    def stop(self, side):
+        """Stop the clock for `side` and apply increment."""
+        if self._started[side] is not None and self._running == side:
+            elapsed = time.time() - self._started[side]
+            self.time[side] -= elapsed
+            self.time[side] += self.increment
+            self.time[side] = max(0.0, self.time[side])
+            self._started[side] = None
+            self._running = None
+
+    def elapsed(self, side):
+        """Current remaining time for `side`."""
+        t = self.time[side]
+        if self._running == side and self._started[side] is not None:
+            t -= time.time() - self._started[side]
+        return max(0.0, t)
+
+    def flag(self, side):
+        """Return True if `side` has run out of time."""
+        return self.elapsed(side) <= 0
+
+    def display(self, side):
+        """Format remaining time as mm:ss."""
+        t = self.elapsed(side)
+        mins = int(t) // 60
+        secs = int(t) % 60
+        tenths = int((t - int(t)) * 10)
+        if t < 10:
+            return f"{mins}:{secs:02d}.{tenths}"
+        return f"{mins}:{secs:02d}"
+
+    @staticmethod
+    def select_time_control():
+        """Prompt user to select a time control. Returns (minutes, increment) or (0,0) for unlimited."""
+        presets = [
+            ("Unlimited",  0,  0),
+            ("Bullet 1+0", 1,  0),
+            ("Bullet 2+1", 2,  1),
+            ("Blitz  3+0", 3,  0),
+            ("Blitz  3+2", 3,  2),
+            ("Blitz  5+0", 5,  0),
+            ("Blitz  5+3", 5,  3),
+            ("Rapid 10+0", 10, 0),
+            ("Rapid 10+5", 10, 5),
+            ("Rapid 15+10",15, 10),
+            ("Classic 30+0",30, 0),
+            ("Custom",     -1, -1),
+        ]
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║                 SELECT TIME CONTROL                      ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        for i, (name, m, inc) in enumerate(presets, 1):
+            print(f"  ║  {i:>2}. {name:<52}║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+        try:
+            sub = input("  Choice [1]: ").strip() or '1'
+        except EOFError:
+            return 0, 0
+        try:
+            idx = int(sub) - 1
+            if 0 <= idx < len(presets):
+                name, mins, inc = presets[idx]
+                if mins == -1:
+                    try:
+                        mins = int(input("  Minutes per side: ").strip() or '10')
+                        inc  = int(input("  Increment (seconds): ").strip() or '0')
+                    except (ValueError, EOFError):
+                        mins, inc = 10, 0
+                return mins, inc
+        except ValueError:
+            pass
+        return 0, 0
+
+
+def _fmt_clock(clock, side):
+    """Format clock display string."""
+    if clock is None:
+        return ''
+    t = clock.display(side)
+    warn = '\033[91m' if clock.elapsed(side) < 30 else ''
+    reset = '\033[0m' if warn else ''
+    return f"{warn}⏱ {t}{reset}"
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  ENDGAME TRAINER
+# ════════════════════════════════════════════════════════════════════════
+
+def endgame_trainer():
+    """
+    Practice standard endgames with coaching hints.
+    """
+    ENDGAMES = [
+        {
+            "id": 1, "title": "KQK — Queen vs Lone King",
+            "fen": "8/8/8/8/8/8/8/KQ5k w - - 0 1",
+            "goal": "Checkmate Black in ≤ 10 moves",
+            "tips": [
+                "Drive the king to the edge first — use your queen to restrict its movement.",
+                "Then use your king actively to help deliver checkmate.",
+                "Beware of stalemate! If the lone king has no moves, it's only a draw.",
+            ],
+        },
+        {
+            "id": 2, "title": "KRK — Rook vs Lone King",
+            "fen": "8/8/8/8/8/8/8/KR5k w - - 0 1",
+            "goal": "Checkmate Black in ≤ 16 moves",
+            "tips": [
+                "Use the 'box' technique — reduce the black king's area move by move.",
+                "Your king must cooperate with the rook.",
+                "Avoid stalemate by leaving the king one escape square before tightening the box.",
+            ],
+        },
+        {
+            "id": 3, "title": "KPK — King and Pawn vs King",
+            "fen": "8/8/8/8/8/8/4P3/4K2k w - - 0 1",
+            "goal": "Promote the pawn",
+            "tips": [
+                "Your king must lead the pawn — go in front of it!",
+                "Gain the opposition (face the enemy king with one square gap).",
+                "If your king reaches the 6th rank in front of the pawn, you win.",
+            ],
+        },
+        {
+            "id": 4, "title": "Opposition & Pawn Endings",
+            "fen": "8/8/8/4k3/8/4K3/4P3/8 w - - 0 1",
+            "goal": "Win by escorting the pawn to promotion",
+            "tips": [
+                "Take the opposition — place your king directly opposite with odd squares between.",
+                "The player NOT having to move first (the opposition holder) usually wins.",
+                "Key positions: e-file with e7 pawn — centralised king fight!",
+            ],
+        },
+        {
+            "id": 5, "title": "Lucena Position — Build the Bridge",
+            "fen": "1K1k4/1P6/8/8/8/8/r7/4R3 w - - 0 1",
+            "goal": "Escort the pawn to promotion using the Lucena method",
+            "tips": [
+                "Step 1: Move king towards centre, step 2: build a 'bridge' with the rook.",
+                "Place your rook on the 4th rank to shield your king from checks.",
+                "Then cut off the attacking rook and promote the pawn.",
+            ],
+        },
+        {
+            "id": 6, "title": "Philidor Position — Hold the Draw",
+            "fen": "4k3/8/8/8/8/8/4P3/3RK3 b - - 0 1",
+            "goal": "Play as Black — hold the draw against K+R+P",
+            "tips": [
+                "Place your rook on the 6th rank (Philidor position) as long as possible.",
+                "Only move to the back rank to give checks when the pawn has advanced far.",
+                "Endless checks from behind are the key drawing technique.",
+            ],
+        },
+        {
+            "id": 7, "title": "KBNK — Bishop + Knight Mate",
+            "fen": "8/8/8/8/8/8/8/KBN4k w - - 0 1",
+            "goal": "Checkmate Black in ≤ 33 moves (hardest basic mate)",
+            "tips": [
+                "Force the black king to the corner that matches your bishop's colour.",
+                "Use the 'W-manoeuvre' with knight and bishop to herd the king.",
+                "This takes practice — be patient and systematic.",
+            ],
+        },
+    ]
+
+    while True:
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║                 ENDGAME TRAINER                          ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        for eg in ENDGAMES:
+            print(f"  ║  {eg['id']:>2}. {eg['title']:<52}║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║   0. Back                                                ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+        try:
+            choice = input("  Choose an endgame: ").strip()
+        except EOFError:
+            return
+        if choice == '0':
+            return
+        try:
+            eid = int(choice)
+            eg = next((e for e in ENDGAMES if e['id'] == eid), None)
+            if eg is None:
+                print("  Invalid choice.")
+                continue
+        except ValueError:
+            print("  Invalid choice.")
+            continue
+
+        _run_endgame(eg)
+
+
+def _run_endgame(eg):
+    """Run a single endgame practice session."""
+    board = _board_from_fen(eg['fen'])
+    if board is None:
+        print("  [Error] Could not load position.")
+        return
+
+    tb = Tablebase()
+    tb._init_if_needed()
+
+    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║  {eg['title']:<56}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  Goal: {eg['goal']:<51}║")
+    print(f"  ╚══════════════════════════════════════════════════════════╝")
+    print()
+    print("  TIPS:")
+    for tip in eg['tips']:
+        print(f"   • {tip}")
+    print()
+    print("  Commands: <move>  hint  tips  flip  reset  q")
+    print()
+
+    persp = board.side
+    last_mv = None
+    move_count = 0
+    human_side = board.side  # player plays the side to move first
+
+    while True:
+        draw_board(board, persp, last_mv)
+        legal = board.legal()
+
+        # Check terminal
+        if not legal:
+            if board.in_check():
+                winner = 'White' if board.side == BLACK else 'Black'
+                print(f"\n  ✓ Checkmate! {winner} wins! Moves taken: {move_count}")
+            else:
+                print(f"\n  ½ Stalemate — draw! Be careful of stalemate traps!")
+            try: input("  Press Enter..."); 
+            except EOFError: pass
+            return
+        if board.is_fifty():
+            print("  ½ 50-move rule — draw. Try to be quicker!")
+            try: input("  Press Enter..."); 
+            except EOFError: pass
+            return
+
+        side_str = 'White' if board.side == WHITE else 'Black'
+        print(f"  Move {move_count+1} — {side_str} to move")
+
+        if board.side == human_side:
+            try:
+                raw = input("  Your move: ").strip()
+            except EOFError:
+                return
+            cmd = raw.lower()
+            if cmd in ('q', 'quit'):
+                return
+            if cmd == 'hint':
+                # Use tablebase or engine for hint
+                eng = Engine(tb=tb)
+                mv, _ = eng.search_best(board, t_limit=1.0)
+                if mv:
+                    print(f"  Hint: try {board.san(mv)}")
+                continue
+            if cmd == 'tips':
+                for tip in eg['tips']:
+                    print(f"   • {tip}")
+                continue
+            if cmd == 'flip':
+                persp = 1 - persp
+                continue
+            if cmd == 'reset':
+                board = _board_from_fen(eg['fen'])
+                last_mv = None; move_count = 0
+                human_side = board.side
+                continue
+
+            raw = board._normalise_input(raw)
+            mv = board.parse_san(raw)
+            if mv is None:
+                print(f"  Illegal: '{raw}'"); continue
+            sn = board.san(mv); board.make(mv); board.san_log.append(sn)
+            last_mv = mv; move_count += 1
+        else:
+            # AI plays the other side using engine
+            eng = Engine(tb=tb)
+            mv, _ = eng.search_best(board, t_limit=1.5)
+            if mv:
+                sn = board.san(mv); board.make(mv); board.san_log.append(sn)
+                last_mv = mv; move_count += 1
+                print(f"  Opponent plays: {sn}")
+            else:
+                print("  Opponent has no move.")
+                return
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  OPENING QUIZ
+# ════════════════════════════════════════════════════════════════════════
+
+def opening_quiz():
+    """
+    Flash-card style quiz: show a board position, ask 'what opening is this?'
+    """
+    QUIZ_POSITIONS = [
+        {"fen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+         "answer": "Ruy Lopez (Spanish Game)",
+         "alternatives": ["Spanish Game", "Ruy Lopez", "Berlin Defence"],
+         "clue": "White's third move attacks the knight defending e5"},
+        {"fen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+         "answer": "Italian Game (Giuoco Piano)",
+         "alternatives": ["Italian", "Giuoco Piano", "Italian Game"],
+         "clue": "White develops the bishop to an aggressive diagonal"},
+        {"fen": "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2",
+         "answer": "Sicilian Defence",
+         "alternatives": ["Sicilian", "Sicilian Defense", "Sicilian Defence"],
+         "clue": "Black's asymmetric response to 1.e4"},
+        {"fen": "rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2",
+         "answer": "Scandinavian Defence (Centre Counter)",
+         "alternatives": ["Scandinavian", "Centre Counter", "Scandinavian Defense"],
+         "clue": "Black immediately contests the centre with a pawn"},
+        {"fen": "rnbqkb1r/pppppppp/5n2/8/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 1 2",
+         "answer": "Indian Defence (after 1.d4 Nf6)",
+         "alternatives": ["Indian", "Indian Defence", "Nimzo", "King's Indian"],
+         "clue": "Black responds to 1.d4 with a knight, not a pawn"},
+        {"fen": "rnbqkbnr/pppppppp/8/8/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2",
+         "answer": "English Opening",
+         "alternatives": ["English", "c4 opening"],
+         "clue": "White's flank pawn opening"},
+        {"fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+         "answer": "Open Game (King's Pawn Game)",
+         "alternatives": ["Open Game", "1.e4 e5 Nf3 Nc6", "Three Knights"],
+         "clue": "Both sides occupy the centre"},
+        {"fen": "rnbqkbnr/ppp1pppp/3p4/8/3PP3/8/PPP2PPP/RNBQKBNR b KQkq e3 0 2",
+         "answer": "Pirc / Modern Defence setup",
+         "alternatives": ["Pirc", "Modern", "King's Indian setup"],
+         "clue": "Black plays d6 versus the broad centre"},
+        {"fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+         "answer": "Open Game (1.e4 e5)",
+         "alternatives": ["Open Game", "e4 e5", "Double King Pawn"],
+         "clue": "The oldest and most direct response to 1.e4"},
+        {"fen": "rnbqkb1r/ppp1pppp/5n2/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq d6 0 3",
+         "answer": "Queen's Gambit",
+         "alternatives": ["QGD", "Queen's Gambit", "d4 d5 c4"],
+         "clue": "White offers a pawn to gain central control"},
+        {"fen": "rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq d6 0 2",
+         "answer": "Queen's Pawn Game (1.d4 d5)",
+         "alternatives": ["Queen's Pawn", "Closed Game", "d4 d5"],
+         "clue": "Both sides claim the centre with the queen's pawn"},
+        {"fen": "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1",
+         "answer": "Réti Opening (1.Nf3)",
+         "alternatives": ["Reti", "Réti", "King's Indian Attack"],
+         "clue": "White develops a knight before pushing any pawns"},
+    ]
+
+    score = 0
+    total = 0
+    random.shuffle(QUIZ_POSITIONS)
+
+    print("\n  ╔══════════════════════════════════════════════════════════╗")
+    print("  ║                 OPENING QUIZ                             ║")
+    print("  ║  Identify the opening from the board position!           ║")
+    print("  ╠══════════════════════════════════════════════════════════╣")
+    print("  ║  Type the opening name, 'skip' to skip, 'q' to quit     ║")
+    print("  ╚══════════════════════════════════════════════════════════╝\n")
+
+    for pz in QUIZ_POSITIONS:
+        board = _board_from_fen(pz['fen'])
+        if board is None:
+            continue
+
+        draw_board(board, WHITE, None)
+        print(f"  What opening is this? (Clue: {pz['clue']})")
+        total += 1
+
+        for attempt in range(3):
+            try:
+                ans = input(f"  Your answer (attempt {attempt+1}/3): ").strip()
+            except EOFError:
+                return
+
+            if ans.lower() in ('q', 'quit'):
+                _show_quiz_score(score, total - 1)
+                return
+            if ans.lower() == 'skip':
+                print(f"  Skipped. Answer: {pz['answer']}")
+                break
+
+            # Flexible matching
+            ans_lower = ans.lower()
+            correct = any(alt.lower() in ans_lower or ans_lower in alt.lower()
+                         for alt in pz['alternatives'] + [pz['answer']])
+            if correct:
+                score += 1
+                pts = 3 - attempt  # 3 pts for first try, 2 for second, 1 for third
+                print(f"  ✓ Correct! (+{pts} pts) — {pz['answer']}")
+                break
+            else:
+                if attempt < 2:
+                    # Extra clue
+                    first_word = pz['answer'].split()[0]
+                    print(f"  ✗ Not quite. Hint: starts with '{first_word}'...")
+                else:
+                    print(f"  ✗ Answer: {pz['answer']}")
+        print()
+
+    _show_quiz_score(score, total)
+
+
+def _show_quiz_score(score, total):
+    """Display quiz final score."""
+    if total == 0:
+        return
+    pct = int(score / total * 100)
+    grade = ("Master! 🏆" if pct >= 90 else
+             "Expert! 🎖️" if pct >= 70 else
+             "Good! 👍" if pct >= 50 else
+             "Keep studying! 📚")
+    print("\n  ─── Quiz Complete ──────────────────────────────────────")
+    print(f"  Score: {score} / {total}  ({pct}%)")
+    print(f"  {grade}")
+    print("  ────────────────────────────────────────────────────────\n")
+    try: input("  Press Enter to continue...")
+    except EOFError: pass
+
+
+# ════════════════════════════════════════════════════════════════════════
+#  STOCKFISH BRIDGE  (optional — uses Stockfish if installed)
+# ════════════════════════════════════════════════════════════════════════
+
+import subprocess
+import shutil
+
+_STOCKFISH_PATH = None
+
+def _find_stockfish():
+    """Detect Stockfish binary location."""
+    global _STOCKFISH_PATH
+    if _STOCKFISH_PATH is not None:
+        return _STOCKFISH_PATH
+    for name in ('stockfish', 'stockfish-17', 'stockfish-16', 'stockfish_x86-64',
+                  'stockfish_modern', '/usr/games/stockfish', '/usr/bin/stockfish',
+                  '/usr/local/bin/stockfish'):
+        path = shutil.which(name) or (name if os.path.isfile(name) else None)
+        if path:
+            _STOCKFISH_PATH = path
+            return path
+    return None
+
+
+class StockfishEngine:
+    """
+    Minimal UCI wrapper around Stockfish (or any UCI engine).
+    Falls back gracefully if Stockfish is not found.
+    """
+    def __init__(self, path=None):
+        self.proc = None
+        self.available = False
+        p = path or _find_stockfish()
+        if not p:
+            return
+        try:
+            self.proc = subprocess.Popen(
+                [p], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, text=True, bufsize=1)
+            self._send('uci')
+            for _ in range(50):
+                line = self._recv(timeout=2.0)
+                if line and 'uciok' in line:
+                    self.available = True
+                    break
+            if self.available:
+                self._send('setoption name Hash value 64')
+                self._send('isready')
+                for _ in range(20):
+                    line = self._recv(timeout=2.0)
+                    if line and 'readyok' in line:
+                        break
+        except Exception:
+            self.available = False
+            self.proc = None
+
+    def _send(self, cmd):
+        if self.proc:
+            self.proc.stdin.write(cmd + '\n')
+            self.proc.stdin.flush()
+
+    def _recv(self, timeout=5.0):
+        if not self.proc:
+            return None
+        import select
+        ready = select.select([self.proc.stdout], [], [], timeout)[0]
+        if ready:
+            return self.proc.stdout.readline().strip()
+        return None
+
+    def analyse(self, fen, movetime_ms=1000, depth=20):
+        """
+        Analyse a position. Returns (best_move_san, score_cp, pv_san_list).
+        score_cp is from the side-to-move's perspective.
+        """
+        if not self.available:
+            return None, None, []
+        self._send(f'position fen {fen}')
+        self._send(f'go movetime {movetime_ms} depth {depth}')
+        best_move = None
+        score_cp = None
+        pv_uci = []
+        while True:
+            line = self._recv(timeout=movetime_ms/1000 + 3.0)
+            if line is None:
+                break
+            if line.startswith('info') and 'score cp' in line:
+                m = re.search(r'score cp (-?\d+)', line)
+                if m:
+                    score_cp = int(m.group(1))
+                pv_match = re.search(r' pv (.+)', line)
+                if pv_match:
+                    pv_uci = pv_match.group(1).split()[:5]
+            if line.startswith('bestmove'):
+                best_move = line.split()[1] if len(line.split()) > 1 else None
+                break
+        # Convert UCI best_move to SAN
+        if best_move and best_move != '(none)':
+            board = _board_from_fen(fen)
+            if board:
+                from_sq = s2sq(best_move[:2])
+                to_sq = s2sq(best_move[2:4])
+                promo = None
+                if len(best_move) == 5:
+                    promo = {'q': QUEEN,'r': ROOK,'b': BISHOP,'n': KNIGHT}.get(best_move[4])
+                for mv in board.legal():
+                    if mv.from_sq == from_sq and mv.to_sq == to_sq:
+                        if promo is None or mv.promotion == promo:
+                            best_san = board.san(mv)
+                            return best_san, score_cp, pv_uci
+        return None, score_cp, pv_uci
+
+    def close(self):
+        if self.proc:
+            try:
+                self._send('quit')
+                self.proc.wait(timeout=2)
+            except Exception:
+                self.proc.kill()
+            self.proc = None
+            self.available = False
+
+
+_sf_engine = None
+
+def get_stockfish():
+    """Return a cached StockfishEngine instance (None if unavailable)."""
+    global _sf_engine
+    if _sf_engine is None:
+        _sf_engine = StockfishEngine()
+    return _sf_engine if _sf_engine.available else None
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Daily puzzle removed — was based on invalid built-in puzzles.
+
+def analyze_pgn_line():
     """Analyze a manually-entered sequence of moves."""
     print("\n  Enter moves separated by spaces (SAN format).")
     print("  Example: e4 e5 Nf3 Nc6 Bb5")
@@ -6231,6 +10095,122 @@ def analyze_online_game_menu():
             except ValueError:
                 print("  Invalid input. Enter a number, 'A', or '0'.")
 
+def game_stats_dashboard():
+    """
+    Display an ASCII stats dashboard based on locally saved games.
+    Shows W/L/D totals, win rate by colour, performance by opening, streaks.
+    """
+    games = load_online_games(limit=500)
+    if not games:
+        print("\n  No games recorded yet. Play some games to see your stats!")
+        try: input("  Press Enter to return...")
+        except EOFError: pass
+        return
+
+    # Determine whose stats to show
+    player = _current_user or 'Player'
+
+    wins = losses = draws = 0
+    white_wins = white_losses = white_draws = 0
+    black_wins = black_losses = black_draws = 0
+    opening_stats = {}   # opening_name -> [wins, losses, draws]
+    current_streak = 0
+    streak_type = None
+    longest_win_streak = 0
+    tmp_ws = 0
+
+    for g in reversed(games):   # oldest first for streaks
+        w = g.get('white', '')
+        b = g.get('black', '')
+        r = g.get('result', '')   # 'white', 'black', or 'draw'
+
+        if player.lower() not in (w.lower(), b.lower()):
+            continue
+
+        is_white = w.lower() == player.lower()
+        if r == 'draw':
+            outcome = 'd'
+        elif (r == 'white' and is_white) or (r == 'black' and not is_white):
+            outcome = 'w'
+        else:
+            outcome = 'l'
+
+        if outcome == 'w':
+            wins += 1; tmp_ws += 1
+            longest_win_streak = max(longest_win_streak, tmp_ws)
+            if is_white: white_wins += 1
+            else:        black_wins += 1
+        elif outcome == 'l':
+            losses += 1; tmp_ws = 0
+            if is_white: white_losses += 1
+            else:        black_losses += 1
+        else:
+            draws += 1; tmp_ws = 0
+            if is_white: white_draws += 1
+            else:        black_draws += 1
+
+        # Opening (from first move if available)
+        moves_list = g.get('moves', [])
+        op_key = moves_list[0] if moves_list else '(unknown)'
+        if op_key not in opening_stats:
+            opening_stats[op_key] = [0, 0, 0]
+        if outcome == 'w':   opening_stats[op_key][0] += 1
+        elif outcome == 'l': opening_stats[op_key][1] += 1
+        else:                opening_stats[op_key][2] += 1
+
+    total = wins + losses + draws
+    if total == 0:
+        print(f"\n  No games found for player '{player}'.")
+        try: input("  Press Enter...")
+        except EOFError: pass
+        return
+
+    def _bar(val, total, width=20):
+        if total == 0: return '░' * width
+        filled = int(round(val / total * width))
+        return '█' * filled + '░' * (width - filled)
+
+    wr = wins / total * 100
+
+    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║              GAME STATS — {player[:28]:<28}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  Total games   : {total:<39}║")
+    print(f"  ║  Wins          : {wins:<5} {_bar(wins,total)} {wr:>5.1f}%  ║")
+    print(f"  ║  Losses        : {losses:<5} {_bar(losses,total)}          ║")
+    print(f"  ║  Draws         : {draws:<5} {_bar(draws,total)}          ║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    # Colour breakdown
+    wt = white_wins + white_losses + white_draws
+    bt = black_wins + black_losses + black_draws
+    if wt:
+        wwr = white_wins / wt * 100
+        print(f"  ║  As White      : {white_wins}W {white_losses}L {white_draws}D   Win rate: {wwr:.1f}%{'':12}║")
+    if bt:
+        bwr = black_wins / bt * 100
+        print(f"  ║  As Black      : {black_wins}W {black_losses}L {black_draws}D   Win rate: {bwr:.1f}%{'':12}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  Longest win streak : {longest_win_streak:<35}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+
+    # Top openings by frequency
+    sorted_ops = sorted(opening_stats.items(), key=lambda x: sum(x[1]), reverse=True)[:5]
+    if sorted_ops:
+        print(f"  ║  TOP OPENINGS (by first move)                            ║")
+        print(f"  ║  {'Move':<8} {'G':>3} {'W':>3} {'L':>3} {'D':>3} {'WR%':>6}{'':16}║")
+        for op, (ow, ol, od) in sorted_ops:
+            og = ow + ol + od
+            owr = ow / og * 100 if og else 0
+            print(f"  ║  {op:<8} {og:>3} {ow:>3} {ol:>3} {od:>3} {owr:>5.1f}%{'':16}║")
+
+    print(f"  ╚══════════════════════════════════════════════════════════╝")
+
+    try:
+        input("  Press Enter to return...")
+    except EOFError:
+        pass
+
+
 def main():
     global _offline_mode, _server_host, _server_port, _server_client
     
@@ -6273,7 +10253,7 @@ def main():
         # Show status bar
         print("  ═══════════════════════════════════════════════════════════════")
         if _offline_mode:
-            print("  ║  OFFLINE MODE                              [8] Enable Online ║")
+            print("  ║  OFFLINE MODE                              [0] Enable Online ║")
         else:
             if _current_user:
                 print(f"  ║  Logged in: {_current_user:<43}║")
@@ -6325,10 +10305,61 @@ def main():
                 print("\n  Feature not available in offline mode.")
 
         elif choice=='9':
-            configure_server_connection()
-
-        elif choice in ('l', 'L'):
             learn_opening()
+
+        elif choice=='10':
+            puzzles_menu()
+
+        elif choice=='11':
+            endgame_trainer()
+
+        elif choice=='12':
+            replay_saved_game_menu()
+
+        elif choice=='13':
+            pgn_menu()
+
+        elif choice=='14':
+            # Opening explorer on last saved game
+            games = load_online_games(limit=1)
+            if games:
+                book_ref = OpeningBook()
+                opening_explorer(games[0].get('moves', []), book=book_ref)
+            else:
+                print("  No saved games yet. Play a game first!")
+
+        elif choice=='15':
+            opening_quiz()
+
+        elif choice=='16':
+            game_stats_dashboard()
+
+        elif choice=='17':
+            settings_menu()
+
+        elif choice=='18':
+            report_bug()
+
+        elif choice=='19':
+            server_daily_puzzle()
+
+        elif choice=='20':
+            if not _offline_mode and _current_user:
+                achievements_menu()
+            else:
+                print("\n  Achievements require an online connection and login.")
+
+        elif choice=='21':
+            if not _offline_mode and _current_user:
+                tournaments_menu()
+            else:
+                print("\n  Tournaments require an online connection and login.")
+
+        elif choice=='22':
+            if not _offline_mode and _current_user:
+                lobby_chat_menu()
+            else:
+                print("\n  Lobby chat requires an online connection and login.")
 
         elif choice=='0':
             # Toggle offline mode
