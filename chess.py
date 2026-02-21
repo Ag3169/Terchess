@@ -872,101 +872,422 @@ class OpeningBook:
         Each line is a space-separated sequence of SAN moves.
         """
         lines = [
-            # e4 openings
-            "e4 e5 Nf3 Nc6 Bb5",       # Ruy Lopez
-            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O",
-            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 O-O",
-            "e4 e5 Nf3 Nc6 Bb5 Nf6",   # Berlin
-            "e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 d4 Nd6 Bxc6 dxc6 dxe5 Nf5",
-            "e4 e5 Nf3 Nc6 Bc4",        # Italian
-            "e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Bd2 Bxd2+ Nbxd2",
-            "e4 e5 Nf3 Nc6 Bc4 Bc5 O-O Nf6 d3",
-            "e4 e5 Nf3 Nc6 Bc4 Nf6",   # Two knights
-            "e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Na5 Bb5+ c6 dxc6 bxc6 Be2 h6 Nf3 e4",
-            "e4 e5 Nf3 Nf6",            # Petrov
-            "e4 e5 Nf3 Nf6 Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Nc6 O-O Be7",
-            "e4 e5 Nf3 d6",             # Philidor
-            "e4 e5 f4",                 # King's Gambit
-            "e4 e5 f4 exf4 Nf3 g5 Bc4 g4 O-O gxf3 Qxf3",
-            "e4 e5 f4 exf4 Nf3 Nf6",
-            "e4 c5",                    # Sicilian
-            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6",  # Najdorf
-            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Be3 e5 Nb3 Be6 f3 Be7 Qd2 O-O g4",
-            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Bg5 e6 f4 Be7 Qf3 Qc7",  # Najdorf Bg5
-            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6",  # Classical
-            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6 Bg5 e6 Qd2 a6 O-O-O Bd7",
-            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 e6",  # Scheveningen
-            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6",  # Accelerated Dragon
-            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6 Nc3 Bg7 Be3 Nf6 Bc4 O-O Bb3 a5",
-            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6",  # Kan
-            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6", # Taimanov
-            "e4 c5 c3",                # Alapin
-            "e4 c5 c3 Nf6 e5 Nd5 d4 cxd4 Nf3 Nc6 Bc4 Nb6 Bb3",
-            "e4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6",
-            "e4 c6",                   # Caro-Kann
-            "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7 h5 Bh7 Bd3 Bxd3 Qxd3",
-            "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Nf6 Nxf6+ exf6 Bc4 Bd6 Qe2+ Qe7",
-            "e4 c6 d4 d5 exd5 cxd5 c4 Nf6 Nc3 e6",   # Panov
-            "e4 c6 d4 d5 Nd2",
-            "e4 e6",                   # French
-            "e4 e6 d4 d5 Nc3 Nf6 Bg5 Be7 e5 Nfd7 Bxe7 Qxe7 f4 O-O Nf3 c5",  # Winawer
-            "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7 Qg4 Qc7",
-            "e4 e6 d4 d5 Nd2 Nf6 e5 Nfd7 c3 c5 f4 Nc6 Ndf3 cxd4 cxd4 Qb6",  # Tarrasch
-            "e4 e6 d4 d5 exd5 exd5 Nf3 Nf6 Bd3 Bd6 O-O O-O",  # Exchange
-            "e4 d5",                   # Scandinavian
-            "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 Bf5 Bc4 e6",
-            "e4 d5 exd5 Nf6 d4 Nxd5 Nf3 g6",
-            "e4 d6",                   # Pirc
-            "e4 d6 d4 Nf6 Nc3 g6 f4 Bg7 Nf3 O-O Bd3 Na6",
-            "e4 g6",                   # Modern
-            "e4 g6 d4 Bg7 Nc3 d6 Be3 Nf6 Qd2 O-O",
-            "e4 Nf6",                  # Alekhine
-            "e4 Nf6 e5 Nd5 d4 d6 Nf3 Bg4 Be2 e6 O-O Be7",
-            "e4 e5 Nf3 Nc6 c3 d5", #ponziani
-            # d4 openings
-            "d4 d5 c4",                # QGD
-            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 h6 Bh4 b6",
-            "d4 d5 c4 e6 Nc3 Nf6 cxd5 exd5 Bg5 Be7 e3 c6 Qc2 Nbd7",  # Exchange QGD
-            "d4 d5 c4 dxc4 Nf3 Nf6 e3 e6 Bxc4 c5 O-O a6",  # QGA
-            "d4 d5 c4 c6",             # Slav
-            "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 a4 Bf5 e3 e6 Bxc4 Bb4",
-            "d4 d5 c4 c6 Nc3 Nf6 e3 e6 Nf3 a6 b3 Bb4 Bd2",  # Semi-Slav Meran
-            "d4 Nf6 c4 g6",            # King's Indian
-            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7",  # KID main
-            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f3 O-O Be3 e5 d5 Nh5 Qd2 f5 O-O-O",  # Samisch
-            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 d5 a5",  # Petrosian
-            "d4 Nf6 c4 e6 Nc3 Bb4",   # Nimzo-Indian
-            "d4 Nf6 c4 e6 Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5 O-O Nc6 a3 Bxc3 bxc3 dxc4 Bxc4",
-            "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 O-O a3 Bxc3+ Qxc3 b6 Bg5 Bb7 e3 d6",
-            "d4 Nf6 c4 e6 Nf3 b6",    # Queen's Indian
+            # ════════════════════════════════════════════════════════════════
+            # e4 OPENINGS
+            # ════════════════════════════════════════════════════════════════
+
+            # ── RUY LOPEZ / SPANISH ──────────────────────────────────────────
+            "e4 e5 Nf3 Nc6 Bb5",
+            # Morphy Defence (…a6)
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Na5 Bc2 c5 d4",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O d4 Bg4",
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 O-O d4 d6 c3",
+            # Closed Ruy Lopez – Marshall Attack
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 O-O c3 d5 exd5 Nxd5 Nxe5 Nxe5 Rxe5 c6",
+            # Open Ruy Lopez
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Nxe4 d4 b5 Bb3 d5 dxe5 Be6",
+            # Berlin Defence
+            "e4 e5 Nf3 Nc6 Bb5 Nf6",
+            "e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 d4 Nd6 Bxc6 dxc6 dxe5 Nf5 Qxd8+ Kxd8",
+            "e4 e5 Nf3 Nc6 Bb5 Nf6 d3 Bc5 c3 O-O O-O d6 Nbd2",
+            # Schliemann Gambit
+            "e4 e5 Nf3 Nc6 Bb5 f5 Nc3 fxe4 Nxe4 d5 Nxe5 dxe4 Nxc6 Qd5",
+            # Classical Ruy Lopez (…Bc5)
+            "e4 e5 Nf3 Nc6 Bb5 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Bd2 Bxd2+ Nbxd2",
+            "e4 e5 Nf3 Nc6 Bb5 Bc5 O-O Nd4 Nxd4 Bxd4 c3 Bb6 d4 Qf6",
+            # Cozio Variation
+            "e4 e5 Nf3 Nc6 Bb5 Nge7 O-O g6 c3 a6 Ba4 Bg7 d4",
+            # Exchange Variation
+            "e4 e5 Nf3 Nc6 Bb5 a6 Bxc6 dxc6 O-O f6 d4 exd4 Nxd4 c5 Ne2 Qxd1 Rxd1",
+            # Steinitz Defence
+            "e4 e5 Nf3 Nc6 Bb5 d6 c3 Bd7 d4 Nge7 O-O Ng6 Re1",
+
+            # ── ITALIAN / GIUOCO PIANO ─────────────────────────────────────
+            "e4 e5 Nf3 Nc6 Bc4",
+            # Giuoco Piano – main lines
+            "e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Nc3 Nxe4 O-O Bxc3 bxc3 d5",
+            "e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Bd2 Bxd2+ Nbxd2 d5 exd5 Nxd5",
+            "e4 e5 Nf3 Nc6 Bc4 Bc5 d3 Nf6 c3 O-O O-O d6 Re1 a6 a4 Ba7",
+            "e4 e5 Nf3 Nc6 Bc4 Bc5 O-O Nf6 Re1 d6 c3 a6 d4 Ba7 Be3 O-O Nbd2",
+            "e4 e5 Nf3 Nc6 Bc4 Bc5 b4 Bxb4 c3 Ba5 d4 exd4 O-O Nge7 cxd4 d5",
+            # Evans Gambit
+            # Two Knights Defence
+            "e4 e5 Nf3 Nc6 Bc4 Nf6",
+            "e4 e5 Nf3 Nc6 Bc4 Nf6 d3 Bc5 c3 O-O Nbd2 d5 exd5 Nxd5 O-O",
+            "e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Na5 Bb5+ c6 dxc6 bxc6 Be2 h6 Nf3 e4 Ne5 Qc7",
+            "e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Nxd5 Nxf7 Kxf7 Qf3+ Ke6 Nc3 Ncb4",
+            # Fried Liver Attack
+            "e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Nxd5 Nxf7 Kxf7 Qf3+",
+            # Slow Italian
+            "e4 e5 Nf3 Nc6 Bc4 Nf6 d3 Be7 O-O O-O Re1 d6 a4",
+            "e4 e5 Nf3 Nc6 Bc4 Bc5 O-O Nf6 d3 d6 c3 a6 Nbd2 Ba7 Re1",
+
+            # ── SCOTCH GAME ────────────────────────────────────────────────
+            "e4 e5 Nf3 Nc6 d4 exd4",
+            "e4 e5 Nf3 Nc6 d4 exd4 Nxd4",
+            "e4 e5 Nf3 Nc6 d4 exd4 Nxd4 Nf6 Nxc6 bxc6 e5 Qe7 Qe2 Nd5 c4 Ba6 b3",
+            "e4 e5 Nf3 Nc6 d4 exd4 Nxd4 Bc5 Be3 Qf6 c3 Nge7 Bc4 O-O O-O Bb6",
+            "e4 e5 Nf3 Nc6 d4 exd4 Nxd4 d6 Nc3 Nf6 Be2 Be7 O-O O-O",
+            # Scotch Gambit
+            "e4 e5 Nf3 Nc6 d4 exd4 Bc4 Bc5 c3 Nf6 e5 d5 Bb5 Ne4 cxd4 Bb4+ Kf1",
+            "e4 e5 Nf3 Nc6 d4 exd4 Bc4 Nf6 e5 d5 Bb5 Ne4 Nxd4 Bc5 Be3 O-O",
+            # Göring Gambit
+            "e4 e5 Nf3 Nc6 d4 exd4 c3 dxc3 Bc4 cxb2 Bxb2",
+
+            # ── FOUR KNIGHTS ─────────────────────────────────────────────
+            "e4 e5 Nf3 Nc6 Nc3 Nf6",
+            "e4 e5 Nf3 Nc6 Nc3 Nf6 Bb5 Bb4 O-O O-O d3 d6 Bg5 Bxc3 bxc3 Ne7 Nh4",
+            "e4 e5 Nf3 Nc6 Nc3 Nf6 d4 exd4 Nxd4 Bb4 Nxc6 bxc6 Bd3",
+            # Belgrade Gambit
+            "e4 e5 Nf3 Nc6 Nc3 Nf6 d4 exd4 Nd5 Nxd5 exd5",
+
+            # ── THREE KNIGHTS ─────────────────────────────────────────────
+            "e4 e5 Nf3 Nc6 Nc3 g6 d4 exd4 Nd5 Bg7 Bg5 Nge7 Nxe7 Qxe7 Nxd4 Nxd4 Qxd4",
+
+            # ── PETROV / RUSSIAN DEFENCE ───────────────────────────────────
+            "e4 e5 Nf3 Nf6",
+            "e4 e5 Nf3 Nf6 Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Nc6 O-O Be7 Re1 Bg4",
+            "e4 e5 Nf3 Nf6 Nxe5 d6 Nf3 Nxe4 d4 d5 Bd3 Be7 O-O O-O Re1 Nc6 c4",
+            "e4 e5 Nf3 Nf6 d4 Nxe4 Bd3 d5 Nxe5 Nd7 Nxd7 Bxd7 O-O Bd6 Re1 O-O",
+            "e4 e5 Nf3 Nf6 Nc3 Nc6 Bb5 Nd4 Ba4 c6 Nxe5 d5 Nxd5 cxd5",
+
+            # ── PHILIDOR DEFENCE ───────────────────────────────────────────
+            "e4 e5 Nf3 d6 d4 Nf6 Nc3 Nbd7 Bc4 Be7 O-O O-O Re1",
+            "e4 e5 Nf3 d6 d4 exd4 Nxd4 Nf6 Nc3 Be7 Be2 O-O O-O",
+            "e4 e5 Nf3 d6 Bc4 Be7 c3 Nf6 d4 exd4 cxd4 d5 exd5 Nxd5 Bxd5 Qxd5 Nc3",
+
+            # ── KING'S GAMBIT ──────────────────────────────────────────────
+            "e4 e5 f4",
+            # King's Gambit Accepted
+            "e4 e5 f4 exf4 Nf3",
+            "e4 e5 f4 exf4 Nf3 g5 Bc4 g4 O-O gxf3 Qxf3 Qf6 e5 Qxe5 Bxf7+ Kxf7 d4",
+            "e4 e5 f4 exf4 Nf3 g5 h4 g4 Ne5 Nf6 Bc4 d5 exd5 Bd6 d4",
+            "e4 e5 f4 exf4 Nf3 d6 d4 g5 h4 g4 Ng5 Nh6 Nxf7 Nxf7 Bxf4",
+            "e4 e5 f4 exf4 Nf3 Nf6 e5 Nh5 Be2 g5 O-O d6 d4 Nc6 exd6 Bxd6",
+            "e4 e5 f4 exf4 Bc4 d5 Bxd5 Nf6 Nc3 Bb4 Nge2 O-O d4",
+            # King's Gambit Declined
+            "e4 e5 f4 Bc5 Nf3 d6 c3 Nf6 d4 exd4 cxd4 Bb6 Nc3 O-O",
+            "e4 e5 f4 d5 exd5 exf4 Nf3 Nf6 Bc4 Nxd5 O-O Be7 Re1",
+
+            # ── VIENNA GAME ───────────────────────────────────────────────
+            "e4 e5 Nc3",
+            "e4 e5 Nc3 Nf6 f4 d5 fxe5 Nxe4 Qf3 Nxc3 bxc3 d4",
+            "e4 e5 Nc3 Nc6 f4 exf4 Nf3 g5 h4 g4 Ng5 h6 Nxf7 Kxf7 Bc4+ Ke8 d4",
+            "e4 e5 Nc3 Nf6 Bc4 Nxe4 Qh5 Nd6 Bb3 Nc6 Nb5 g6 Qf3 f5 Qd5 Qe7 Nxc7+ Kd8 Nxa8",
+            "e4 e5 Nc3 Bc5 Bc4 Nf6 d3 Nc6 Na4 Bb4+ c3 Ba5 Nf3 O-O O-O d6",
+            "e4 e5 Nc3 Nc6 Bc4 Bc5 Qg4 Qf6 Nd5 Qxf2+ Kd1 Qxg2 Qxg7",
+
+            # ── SICILIAN DEFENCE ────────────────────────────────────────────
+            "e4 c5",
+            # Najdorf
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Be3 e5 Nb3 Be6 f3 Be7 Qd2 O-O g4 d5",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Be3 e5 Nb3 Be6 Be2 Nbd7 O-O g6",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Bg5 e6 f4 Be7 Qf3 Qc7 O-O-O Nbd7",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Bc4 e6 Bb3 Nbd7 f4 Nc5 f5 Nxb3 axb3",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 f3 e5 Nb3 Be6 Be3 Be7 Qd2 O-O O-O-O",
+            # Classical Sicilian
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6 Bg5 e6 Qd2 a6 O-O-O Bd7 f4",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6 Be2 e6 O-O Be7 Be3 O-O f4",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 Nc6 f3 e5 Nb3 Be6 Be3 Be7 Qd2 O-O O-O-O",
+            # Scheveningen
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 e6",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 e6 Be2 Be7 O-O O-O f4 Nc6 Be3 Nxd4 Bxd4",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 e6 g4 h6 h4 Nc6 Rg1 d5 exd5",
+            # Dragon
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 Nc6 Qd2 O-O O-O-O d5",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 O-O Qd2 Nc6 g4 Be6 Nxe6 fxe6",
+            "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 Nc6 Bc4 O-O Bb3 Qb6 Qd2",
+            # Accelerated Dragon
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6",
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6 Nc3 Bg7 Be3 Nf6 Bc4 O-O Bb3 a5 f3 d5",
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 g6 c4 Nf6 Nc3 d6 Be2 Nxd4 Qxd4 Bg7 Be3",
+            # Sveshnikov
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 Nf6 Nc3 e5 Ndb5 d6 Bg5 a6 Na3 b5 Bxf6 gxf6 Nd5",
+            "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 Nf6 Nc3 e5 Ndb5 d6 Bg5 a6 Bxf6 gxf6 Na3 f5 exf5",
+            # Kan / Sicilian Four Knights
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6 Nc3 Qc7 Be2 Nf6 O-O Nc6 Be3 Be7 f4",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6 Be2 Nf6 O-O Qc7 a4 d6 Nc3",
+            # Taimanov
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 Qc7 Be3 a6 Be2 Nf6 O-O Bb4 Na4",
+            "e4 c5 Nf3 e6 d4 cxd4 Nxd4 Nc6 Nc3 d6 Be2 Nf6 O-O Be7 Be3 O-O f4",
+            # Alapin
+            "e4 c5 c3",
+            "e4 c5 c3 Nf6 e5 Nd5 d4 cxd4 Nf3 Nc6 cxd4 d6 exd6 Bxd6 Be2",
+            "e4 c5 c3 d5 exd5 Qxd5 d4 Nc6 Nf3 Bg4 Be2 cxd4 cxd4 e6 Nc3 Qa5",
+            "e4 c5 c3 e6 d4 d5 e5 Nc6 Nf3 Nge7 Na3 cxd4 cxd4 Nf5 Nc2 Be7",
+            # Grand Prix Attack
+            "e4 c5 Nc3 Nc6 f4 g6 Nf3 Bg7 Bc4 e6 f5 exf5 exf5 d5 Bb3 Nge7",
+            # Closed Sicilian
+            "e4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6 Be3 e6 Nge2 Nge7 O-O",
+            "e4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nge2 d6 d3 Nf6 O-O O-O f4 Rb8",
+            # Smith-Morra Gambit
+            "e4 c5 d4 cxd4 c3 dxc3 Nxc3 Nc6 Nf3 d6 Bc4 e6 O-O a6 Qe2",
+
+            # ── CARO-KANN ──────────────────────────────────────────────────
+            "e4 c6",
+            # Classical Variation
+            "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7 h5 Bh7 Bd3 Bxd3 Qxd3 e6",
+            "e4 c6 d4 d5 Nd2 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7 Bd3 Bxd3 Qxd3 e6",
+            # Advance Variation
+            "e4 c6 d4 d5 e5 Bf5 Nf3 e6 Be2 Nd7 O-O Bg6 Nbd2 Ne7 Nb3 Nf5",
+            "e4 c6 d4 d5 e5 Bf5 Nc3 e6 g4 Bg6 Nge2 Ne7 Nf4 Bh7 Be3 c5",
+            "e4 c6 d4 d5 e5 c5 dxc5 Nc6 Nf3 Bg4 Be2 e6 O-O Bxf3 Bxf3 Nxe5",
+            # Exchange Variation
+            "e4 c6 d4 d5 exd5 cxd5 Bd3 Nf6 c3 Nc6 Nf3 Bg4 Nbd2 e6 h3 Bh5 O-O",
+            # Panov-Botvinnik Attack
+            "e4 c6 d4 d5 exd5 cxd5 c4 Nf6 Nc3 e6 Nf3 Bb4 cxd5 Nxd5 Bd2 Nc6 Bd3",
+            # Two Knights Variation
+            "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Nf6 Nxf6+ exf6 Bc4 Bd6 Qe2+ Be7 c3",
+            # Nimzovich-Gurgenidze
+            "e4 c6 d4 d5 Nc3 g6 h3 Bg7 Nf3 dxe4 Nxe4 Nf6 Nxf6+ exf6 Bc4",
+
+            # ── FRENCH DEFENCE ─────────────────────────────────────────────
+            "e4 e6",
+            # Classical Variation
+            "e4 e6 d4 d5 Nc3 Nf6 Bg5 Be7 e5 Nfd7 Bxe7 Qxe7 f4 O-O Nf3 c5",
+            "e4 e6 d4 d5 Nc3 Nf6 Bg5 dxe4 Nxe4 Be7 Bxf6 gxf6 Nf3 b6 Bc4",
+            # Winawer
+            "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7 Qg4 Qc7 Qxg7 Rg8 Qxh7 cxd4",
+            "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7 h4 Nbc6 h5 Qa5 Bd2",
+            "e4 e6 d4 d5 Nc3 Bb4 Qd3 c5 dxc5 Nc6 Nf3 Bxc5 a3 Nge7 Bd2",
+            # Tarrasch Variation
+            "e4 e6 d4 d5 Nd2 c5 Ngf3 Nc6 exd5 exd5 Bb5 Bd6 dxc5 Bxc5 O-O Nge7",
+            "e4 e6 d4 d5 Nd2 Nf6 e5 Nfd7 Bd3 c5 c3 Nc6 Ne2 cxd4 cxd4 f6",
+            # Exchange Variation
+            "e4 e6 d4 d5 exd5 exd5 Nf3 Nf6 Bd3 Bd6 O-O O-O Bg5 Bg4 c3",
+            # Advance Variation
+            "e4 e6 d4 d5 e5 c5 c3 Qb6 Nf3 Nc6 Be2 cxd4 cxd4 Nh6 Nc3 Nf5 Na4",
+            "e4 e6 d4 d5 e5 c5 c3 Qb6 Nf3 Bd7 Be2 Bb5 Bxb5+ Nxb5 O-O",
+            # King's Indian Attack vs French
+            "e4 e6 d3 d5 Nd2 Nf6 Ngf3 c5 g3 Nc6 Bg2 Be7 O-O O-O Re1",
+
+            # ── SCANDINAVIAN ─────────────────────────────────────────────
+            "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 Nf6 Nf3 Bf5 Bc4 e6 Bd2 c6 Nd5 Qd8",
+            "e4 d5 exd5 Qxd5 Nc3 Qa5 d4 c6 Nf3 Nf6 Bc4 Bf5 Ne5 e6 g4 Bg6",
+            "e4 d5 exd5 Nf6 d4 Nxd5 Nf3 g6 Be2 Bg7 O-O O-O Nbd2 c6 c4 Nc7",
+            "e4 d5 exd5 Nf6 Nf3 Nxd5 d4 Nc6 c4 Nb6 Nc3 g6 Be2 Bg7 O-O O-O",
+            "e4 d5 exd5 c6 dxc6 Nxc6 d4 e5 Nf3 exd4 Nxd4 Nxd4 Qxd4 Qxd4",
+
+            # ── PIRC DEFENCE ─────────────────────────────────────────────
+            "e4 d6 d4 Nf6 Nc3 g6",
+            "e4 d6 d4 Nf6 Nc3 g6 f4 Bg7 Nf3 O-O Be2 c5 dxc5 Qa5 O-O Qxc5+ Kh1",
+            "e4 d6 d4 Nf6 Nc3 g6 Be3 Bg7 Qd2 Nc6 O-O-O O-O f3 e5 dxe5 dxe5",
+            "e4 d6 d4 Nf6 Nc3 g6 Be2 Bg7 Nf3 O-O O-O c6 a4 Nbd7 Re1 e5 dxe5",
+            # Austrian Attack
+            "e4 d6 d4 Nf6 Nc3 g6 f4 Bg7 Nf3 c5 dxc5 Qa5 Bd3 Qxc5 Qe2 O-O Be3",
+            # 150 Attack
+            "e4 d6 d4 Nf6 Nc3 g6 Be3 Bg7 Qd2 c6 f3 b5 Nge2 Nbd7 Bh6 Bxh6 Qxh6 Bb7",
+
+            # ── MODERN DEFENCE ─────────────────────────────────────────────
+            "e4 g6 d4 Bg7 Nc3 d6 Be3 Nf6 Qd2 O-O O-O-O c6 f3 b5 h4",
+            "e4 g6 d4 Bg7 Nc3 c6 Nf3 d5 h3 dxe4 Nxe4 Nd7 Ng3 Ngf6 Bd3",
+
+            # ── ALEKHINE DEFENCE ───────────────────────────────────────────
+            "e4 Nf6 e5 Nd5 d4 d6 Nf3 Bg4 Be2 e6 O-O Be7 h3 Bh5 c4 Nb6 Nc3",
+            "e4 Nf6 e5 Nd5 d4 d6 c4 Nb6 exd6 cxd6 Nc3 g6 Be3 Bg7 Rc1 O-O b3",
+            "e4 Nf6 e5 Nd5 d4 d6 Nf3 dxe5 Nxe5 c6 Bc4 Nd7 Nxd7 Bxd7 O-O Nf6",
+            # Four Pawns Attack
+            "e4 Nf6 e5 Nd5 d4 d6 c4 Nb6 f4 dxe5 fxe5 Nc6 Be3 Bf5 Nc3 e6",
+
+            # ── PONZIANI OPENING ───────────────────────────────────────────
+            "e4 e5 Nf3 Nc6 c3 Nf6 d4 Nxe4 d5 Ne7 Nxe5 Ng6 Qd4 Nf6 Bg5",
+
+            # ── BISHOP'S OPENING ──────────────────────────────────────────
+            "e4 e5 Bc4 Nf6 d3 c6 Nf3 d5 Bb3 Bd6 Nc3 O-O O-O",
+            "e4 e5 Bc4 Bc5 Nf3 Nf6 d3 O-O O-O d6 c3 a6 Nbd2",
+
+            # ── CENTRE GAME / DANISH GAMBIT ────────────────────────────────
+            "e4 e5 d4 exd4 c3 dxc3 Bc4 cxb2 Bxb2 d5 Bxd5 Nf6 Nc3 Bb4 Ne2",
+            "e4 e5 d4 exd4 Qxd4 Nc6 Qe3 Nf6 Nc3 Bb4 Bd2 O-O O-O-O Re8",
+
+            # ── HALLOWEEN GAMBIT ────────────────────────────────────────────
+            "e4 e5 Nf3 Nc6 Nc3 Nf6 Nxe5 Nxe5 d4 Nc6 d5 Ne5 f4 Ng6 e5 Ng8",
+
+            # ════════════════════════════════════════════════════════════════
+            # d4 OPENINGS
+            # ════════════════════════════════════════════════════════════════
+
+            # ── QUEEN'S GAMBIT ────────────────────────────────────────────
+            "d4 d5 c4",
+            # QGD – Orthodox
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 h6 Bh4 b6 cxd5 Nxd5 Bxe7 Qxe7 Nxd5 exd5",
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Rc1 Nbd7 Nf3 c6 Bd3 dxc4 Bxc4 Nd5",
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 Nbd7 Rc1 c6 Bd3 dxc4 Bxc4 b5",
+            # Tartakower Variation
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 h6 Bh4 b6 cxd5 Nxd5 Bxe7 Qxe7 Nxd5 exd5",
+            # QGD – Exchange
+            "d4 d5 c4 e6 Nc3 Nf6 cxd5 exd5 Bg5 Be7 e3 c6 Qc2 Nbd7 Bd3 Nf8 Nge2",
+            # QGA
+            "d4 d5 c4 dxc4 Nf3 Nf6 e3 e6 Bxc4 c5 O-O a6 Qe2 b5 Bd3 Bb7 a4",
+            "d4 d5 c4 dxc4 e3 Nf6 Bxc4 e6 Nf3 c5 O-O a6 dxc5 Qxd1 Rxd1 Bxc5",
+            # Slav Defence
+            "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 a4 Bf5 e3 e6 Bxc4 Bb4 O-O Nbd7",
+            "d4 d5 c4 c6 Nf3 Nf6 Nc3 e6 e3 a6 b3 Bb4 Bd2 Nbd7 Bd3 O-O",
+            "d4 d5 c4 c6 Nc3 Nf6 e3 e6 Nf3 a6 b3 Bb4 Bd2 Nbd7 Bd3 O-O O-O",
+            # Semi-Slav – Meran
+            "d4 d5 c4 c6 Nc3 Nf6 Nf3 e6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 a6 e4",
+            "d4 d5 c4 c6 Nc3 Nf6 Nf3 e6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 Bb7 O-O",
+            # Moscow Variation
+            "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 e3 b5 a4 b4 Ne4 Ba6 Nxf6+ exf6",
+            # Anti-Moscow / Cambridge Springs
+            "d4 d5 c4 e6 Nc3 Nf6 Bg5 Nbd7 e3 c6 Nf3 Qa5 cxd5 Nxd5 Qd2 N7f6",
+            # Catalan Opening
+            "d4 d5 c4 e6 g3 Nf6 Bg2 Be7 Nf3 O-O O-O dxc4 Qc2 a6 Qxc4 b5 Qc2 Bb7",
+            "d4 d5 c4 e6 g3 Nf6 Bg2 Be7 Nf3 O-O O-O Nbd7 Qc2 c6 Nbd2 b6",
+            "d4 d5 c4 e6 Nf3 Nf6 g3 Be7 Bg2 O-O O-O dxc4 Qc2 a6 a4 Bd7",
+
+            # ── NIMZO-INDIAN ──────────────────────────────────────────────
+            "d4 Nf6 c4 e6 Nc3 Bb4",
+            # Rubinstein Variation (e3)
+            "d4 Nf6 c4 e6 Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5 O-O Nc6 a3 Bxc3 bxc3 dxc4 Bxc4 Qc7",
+            "d4 Nf6 c4 e6 Nc3 Bb4 e3 b6 Bd3 Bb7 Nf3 O-O O-O c5 a3 Bxc3 bxc3 d6",
+            # Classical Variation (Nf3 / Be2)
+            "d4 Nf6 c4 e6 Nc3 Bb4 Nf3 c5 g3 cxd4 Nxd4 O-O Bg2 d5 Qb3 Bxc3+ bxc3 dxc4 Qxc4 Qc7",
+            "d4 Nf6 c4 e6 Nc3 Bb4 Nf3 O-O e3 d5 Bd3 c5 O-O cxd4 exd4 dxc4 Bxc4 b6",
+            # Kasparov Variation (g3)
+            "d4 Nf6 c4 e6 Nc3 Bb4 g3 O-O Bg2 d5 Nf3 dxc4 O-O Nc6 Qc2 Bxc3 Qxc3 b5",
+            # Sämisch Variation (f3)
+            "d4 Nf6 c4 e6 Nc3 Bb4 f3 d5 a3 Bxc3+ bxc3 c5 cxd5 exd5 e3 O-O Ne2 c4",
+            # Leningrad Variation (Bg5)
+            "d4 Nf6 c4 e6 Nc3 Bb4 Bg5 h6 Bh4 c5 d5 d6 e3 Bxc3+ bxc3 e5",
+            # Hübner Variation
+            "d4 Nf6 c4 e6 Nc3 Bb4 e3 c5 Bd3 Nc6 Nf3 Bxc3 bxc3 d6 e4 e5 d5 Ne7",
+            # Zürich Variation (Qc2)
+            "d4 Nf6 c4 e6 Nc3 Bb4 Qc2 O-O a3 Bxc3+ Qxc3 b6 Bg5 Bb7 e3 d6 Ne2 Nbd7",
+
+            # ── KING'S INDIAN DEFENCE ─────────────────────────────────────
+            "d4 Nf6 c4 g6 Nc3 Bg7",
+            # Classical Variation
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 Ne1 Nd7",
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 Nd2 Nd7 a3 f5",
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 d5 a5 Ne1 Nd7 Nd3 f5 exf5 gxf5",
+            # Sämisch Variation
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f3 O-O Be3 e5 d5 Nh5 Qd2 f5 O-O-O Nd7",
+            # Four Pawns Attack
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f4 O-O Nf3 c5 dxc5 Qa5 Bd3 Qxc5 Qe2",
+            # Petrosian System
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 d5 a5 Bg5 h6 Bh4 g5 Nxg5",
+            # Averbakh Variation
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Be2 O-O Bg5 c5 d5 h6 Bh4 g5 Bg3 Nh5",
+            # Fianchetto Variation
+            "d4 Nf6 c4 g6 g3 Bg7 Bg2 d6 Nc3 O-O Nf3 Nbd7 O-O e5 e4 exd4 Nxd4 Re8",
+            "d4 Nf6 c4 g6 g3 Bg7 Bg2 O-O Nc3 d6 Nf3 Nc6 O-O a6 d5 Na5 Nd2 c5",
+            # Mar del Plata
+            "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 Ne1 Nd7 f3 f5 g4",
+
+            # ── QUEEN'S INDIAN DEFENCE ────────────────────────────────────
+            "d4 Nf6 c4 e6 Nf3 b6",
             "d4 Nf6 c4 e6 Nf3 b6 g3 Ba6 b3 Bb4+ Bd2 Be7 Bg2 c6 Bc3 d5 Ne5 Nfd7",
-            "d4 Nf6 c4 e6 Nf3 d5 Nc3 Be7 Bf4 O-O e3 c5 dxc5 Bxc5",  # QGD Be7
-            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6",  # Modern Benoni
-            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 Nf3 g6 g3 Bg7 Bg2 O-O O-O",
-            "d4 f5",                   # Dutch
-            "d4 f5 c4 Nf6 g3 e6 Bg2 Be7 Nf3 O-O O-O d6 Nc3 Qe8",
-            "d4 f5 Nf3 Nf6 g3 e6 Bg2 Be7 O-O O-O c4 d6",
-            "d4 d6 c4 g6 Nc3 Bg7 e4 Nf6",  # King's Indian setup
-            "d4 c5 d5 Nf6 Nc3 g6 e4 d6 Nf3 Bg7 Be2 O-O O-O",
-            # Nf3 openings
-            "Nf3 Nf6 c4 g6 g3 Bg7 Bg2 O-O O-O d6",
-            "Nf3 d5 g3 Nf6 Bg2 g6 O-O Bg7 d3 O-O",
-            "Nf3 Nf6 g3 g6 Bg2 Bg7 O-O O-O d3 d6",
-            # English
+            "d4 Nf6 c4 e6 Nf3 b6 e3 Bb7 Bd3 Be7 O-O O-O Nc3 Ne4 Qc2 Nxc3 Qxc3 d6",
+            "d4 Nf6 c4 e6 Nf3 b6 Nc3 Bb7 a3 d5 cxd5 Nxd5 e3 Be7 Bb5+ c6 Bd3 Nxc3",
+            "d4 Nf6 c4 e6 Nf3 b6 g3 Bb7 Bg2 Be7 O-O O-O Nc3 Ne4 Bd2 Nxd2 Qxd2 d6 d5",
+            "d4 Nf6 c4 e6 Nf3 b6 g3 Bb4+ Bd2 Bxd2+ Qxd2 Bb7 Bg2 O-O Nc3 d5 cxd5 Nxd5",
+
+            # ── GRÜNFELD DEFENCE ──────────────────────────────────────────
+            "d4 Nf6 c4 g6 Nc3 d5",
+            "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Bc4 c5 Ne2 Nc6 Be3 O-O",
+            "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Nf3 c5 Rb1 O-O Be2 cxd4 cxd4 Qa5+",
+            "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 Bd2 Bg7 e4 Nxc3 Bxc3 O-O Qd2 c5 d5 e6",
+            "d4 Nf6 c4 g6 Nc3 d5 Bf4 Bg7 e3 O-O Rc1 dxc4 Bxc4 c5 dxc5 Qa5 Nge2 Nbd7 O-O Nxc5",
+            # Exchange Variation
+            "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Be3 c5 Qd2 Qa5 Rc1 O-O",
+            # Russian System
+            "d4 Nf6 c4 g6 Nc3 d5 Nf3 Bg7 Qb3 dxc4 Qxc4 O-O e4 a6 e5 b5 Qb3 Nc6",
+
+            # ── BENONI DEFENCE ────────────────────────────────────────────
+            "d4 Nf6 c4 c5 d5",
+            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 Nf3 g6 g3 Bg7 Bg2 O-O O-O Re8 a4",
+            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 e4 g6 Bd3 Bg7 Nge2 O-O f3 Ne8 Be3",
+            # Taimanov Benoni
+            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 Nf3 g6 g3 Bg7 Bg2 O-O O-O Na6 Nd2 Nb4",
+            # Modern Benoni
+            "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 e4 g6 Nf3 Bg7 Be2 O-O O-O a6 a4 Nbd7",
+            # Czech Benoni
+            "d4 Nf6 c4 c5 d5 e5 Nc3 d6 e4 Be7 Nge2 O-O Ng3 Ne8 Be2 g6 O-O Nd7",
+            # Blumenfeld Gambit
+            "d4 Nf6 c4 e6 Nf3 c5 d5 b5 dxe6 fxe6 cxb5 d5 Nc3 Bd6 e4 dxe4 Nxe4",
+
+            # ── DUTCH DEFENCE ────────────────────────────────────────────
+            "d4 f5",
+            "d4 f5 c4 Nf6 g3 e6 Bg2 Be7 Nf3 O-O O-O d6 Nc3 Qe8 b3",
+            # Stonewall
+            "d4 f5 c4 Nf6 g3 e6 Bg2 d5 Nf3 c6 O-O Bd6 b3 Qe7 Ne5",
+            "d4 f5 Nf3 Nf6 g3 e6 Bg2 d5 O-O c6 c4 Bd6 b3 Qe7 Bb2",
+            # Leningrad Dutch
+            "d4 f5 Nf3 Nf6 g3 g6 Bg2 Bg7 O-O O-O c4 d6 Nc3 Qe8 d5 Na6",
+            "d4 f5 c4 Nf6 Nc3 g6 Nf3 Bg7 g3 O-O Bg2 d6 O-O c6 b3 Ne4 Bb2",
+            # Classical Dutch
+            "d4 f5 c4 e6 Nf3 Nf6 Nc3 Bb4 Qc2 O-O a3 Bxc3+ Qxc3 b6 g3 Bb7 Bg2",
+            # Hopton Attack
+            "d4 f5 Bg5 g6 Nc3 Bg7 e4 fxe4 Nxe4 Nf6 Nxf6+ Bxf6 Bh6 O-O Qd2",
+
+            # ── LONDON SYSTEM ────────────────────────────────────────────
+            "d4 d5 Bf4",
+            "d4 d5 Bf4 Nf6 e3 e6 Nd2 c5 c3 Nc6 Ngf3 Bd6 Bg3 O-O Bd3",
+            "d4 d5 Bf4 c5 e3 Nc6 c3 Nf6 Nd2 e6 Ngf3 Bd6 Bg3 O-O Bd3 Re8",
+            "d4 Nf6 Bf4 e6 e3 d5 Nf3 c5 c3 Nc6 Nbd2 Bd6 Bg3 O-O Bd3 Re8",
+            "d4 d5 Bf4 Nf6 Nf3 c5 e3 Nc6 c3 e6 Nbd2 Bd6 Bg3 O-O Bd3 Qe7",
+            # Barry Attack
+            "d4 Nf6 Nf3 g6 Nc3 d5 Bf4 Bg7 e3 O-O Be2 c5 Ne5 cxd4 exd4 Nc6 Nxc6 bxc6",
+
+            # ── TROMPOWSKY ATTACK ─────────────────────────────────────────
+            "d4 Nf6 Bg5",
+            "d4 Nf6 Bg5 Ne4 Bf4 c5 f3 Qa5+ c3 Nf6 d5 e6 e4 exd5 exd5 d6",
+            "d4 Nf6 Bg5 e6 e4 h6 Bxf6 Qxf6 Nc3 Bb4 Qd3 d5 O-O-O Bxc3 Qxc3 dxe4 Qxe5",
+            "d4 Nf6 Bg5 d5 Bxf6 exf6 e3 c6 c4 f5 Nc3 Nd7 cxd5 cxd5 Nge2",
+
+            # ── TORRE / COLLE SYSTEM ──────────────────────────────────────
+            "d4 Nf6 Nf3 d5 Bg5 e6 e3 Be7 Nbd2 O-O c3 Nbd7 Bd3 c5 O-O",
+            "d4 d5 Nf3 Nf6 e3 e6 Bd3 c5 c3 Nc6 Nbd2 Bd6 O-O O-O dxc5 Bxc5 e4",
+            "d4 Nf6 Nf3 e6 e3 d5 Bd3 c5 c3 Nc6 Nbd2 Bd6 O-O O-O dxc5 Bxc5 e4",
+            # Colle-Koltanowski
+            "d4 d5 Nf3 Nf6 e3 e6 Bd3 c5 O-O Nc6 c3 Bd6 Nbd2 Qc7 dxc5 Bxc5 e4 dxe4 Nxe4",
+
+            # ── BUDAPEST GAMBIT ───────────────────────────────────────────
+            "d4 Nf6 c4 e5 dxe5 Ng4 Nf3 Bc5 e3 Nc6 Nc3 O-O Be2 Ngxe5 Nxe5 Nxe5 O-O",
+            "d4 Nf6 c4 e5 dxe5 Ne4 Nd2 Nxd2 Bxd2 d6 exd6 Bxd6 Nf3 O-O e3 Nc6",
+
+            # ── BENKO GAMBIT ──────────────────────────────────────────────
+            "d4 Nf6 c4 c5 d5 b5 cxb5 a6 bxa6 Bxa6 Nc3 d6 Nf3 g6 g3 Bg7 Bg2 O-O O-O Nbd7",
+            "d4 Nf6 c4 c5 d5 b5 cxb5 a6 e3 axb5 Bxb5 Qa5+ Nc3 Bb7 Nf3 g6",
+
+            # ── BOGO-INDIAN DEFENCE ───────────────────────────────────────
+            "d4 Nf6 c4 e6 Nf3 Bb4+",
+            "d4 Nf6 c4 e6 Nf3 Bb4+ Bd2 Bxd2+ Qxd2 O-O Nc3 d5 e3 Nbd7 cxd5 exd5",
+            "d4 Nf6 c4 e6 Nf3 Bb4+ Nbd2 O-O e3 d5 Bd3 c5 O-O Nc6 a3 Bxd2 Bxd2",
+
+            # ── OLD INDIAN DEFENCE ────────────────────────────────────────
+            "d4 Nf6 c4 d6 Nc3 Nbd7 e4 e5 Nf3 Be7 Be2 c6 O-O O-O d5 Nc5",
+            "d4 Nf6 c4 d6 Nc3 e5 Nf3 Nbd7 g3 g6 Bg2 Bg7 O-O O-O e4 c6",
+
+            # ── RAGOZIN / VIENNA QGD ──────────────────────────────────────
+            "d4 d5 c4 e6 Nf3 Nf6 Nc3 Bb4",
+            "d4 d5 c4 e6 Nf3 Nf6 Nc3 Bb4 Bg5 h6 Bxf6 Qxf6 e3 O-O Rc1 dxc4 Bxc4 c5",
+            "d4 d5 c4 e6 Nf3 Nf6 Nc3 Bb4 cxd5 exd5 Bg5 h6 Bh4 g5 Bg3 Ne4",
+
+            # ── SYMMETRICAL ENGLISH / HEDGEHOG ───────────────────────────
+            "c4 c5 Nf3 Nf6 Nc3 e6 g3 b6 Bg2 Bb7 O-O Be7 d4 cxd4 Qxd4 d6 Rd1 a6 Qh4",
+            "c4 c5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2 Nc7 Nf3 Nc6 O-O e5 a3 Be7",
+
+            # ── RÉTI OPENING ──────────────────────────────────────────────
+            "Nf3 d5 c4 d4 b4 f6 g3 e5 Bg2 Be6 O-O c5 e3 Nf6",
+            "Nf3 Nf6 c4 g6 g3 Bg7 Bg2 O-O O-O d6 d4 Nc6 Nc3 a6 d5 Na5 Nd2",
+            "Nf3 d5 g3 Nf6 Bg2 e6 O-O Be7 d3 O-O Nbd2 c5 c3 Nc6 Re1 b5",
+
+            # ── ENGLISH OPENING ───────────────────────────────────────────
             "c4 e5 Nc3 Nf6 g3 d5 cxd5 Nxd5 Bg2 Nb6 Nf3 Nc6 O-O Be7 d3",
-            "c4 e5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6 Nf3 f5 O-O Nf6",
-            "c4 Nf6 Nc3 e6 Nf3 d5 d4 Be7 Bg5 O-O e3 h6 Bh4 b6",
-            "c4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nf3 e5 O-O Nge7",
-            "c4 c5 Nf3 Nf6 Nc3 d5 cxd5 Nxd5 e4 Nb4 Bc4 e6 O-O N8c6",
-            # Misc sharp lines
-            "e4 e5 Nf3 Nc6 d4 exd4 Bc4",  # Scotch Gambit
-            "e4 e5 Nf3 Nc6 d4 exd4 Nxd4 Bc5 Be3 Qf6 c3 Nge7 Bc4 Ne5 Be2",
-            "e4 e5 Nc3 Nf6 Bc4 Nxe4 Qh5 Nd6 Bb3 Nc6 Nb5 g6 Qf3 f5 Qd5",
-            "e4 e5 Nc3 Nc6 f4",       # Vienna Gambit
-            "e4 e5 Nc3 Bc5 Nf3 d6 d4 exd4 Nxd4 Nf6 Bg5",
-            "d4 d5 Bf4 Nf6 Nf3 e6 e3 Bd6 Bg3 O-O c3 b6",   # London
-            "d4 Nf6 Bf4 e6 e3 d5 Nf3 c5 c3 Nc6 Nbd2 Bd6 Bg3 O-O Bd3",
-            "Nf3 d5 d4 Nf6 c4 e6 Nc3 c6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 Bb7",
+            "c4 e5 Nc3 Nc6 g3 g6 Bg2 Bg7 d3 d6 Nf3 f5 O-O Nf6 Rb1",
+            "c4 Nf6 Nc3 e6 Nf3 d5 d4 Be7 Bg5 O-O e3 h6 Bh4 b6 cxd5 exd5",
+            "c4 c5 Nc3 Nc6 g3 g6 Bg2 Bg7 Nf3 e5 O-O Nge7 d3 O-O Be3 d6",
         ]
 
         book = {}
@@ -1664,25 +1985,38 @@ MOVE_CATEGORIES = {
     'blunder': {'label': 'BLUNDER', 'symbol': '??'}
 }
 
-def classify_move(cp_loss, is_best_move, is_book_move=False):
+def classify_move(cp_loss, is_best_move, is_book_move=False, is_real_sacrifice=False):
     """
-    Classify a move based on centipawn loss, whether it was the best move, and if it's in the opening book.
-    cp_loss: positive = you lost ground, negative = you gained ground
-    is_best_move: whether this was the engine's top choice
-    is_book_move: whether this move is in the opening book
+    Classify a move based on centipawn loss, whether it was best, book, or a real sacrifice.
+
+    cp_loss         : positive = you lost ground, negative = you gained ground
+    is_best_move    : engine's top choice at this position
+    is_book_move    : in the opening book
+    is_real_sacrifice: move gives up MORE material than it captures AND the engine
+                       still considers it best (non-trivial tactic)
+
+    A BRILLIANT move requires ALL of:
+      • is_best_move (engine agrees it is correct)
+      • is_real_sacrifice (genuine material down after the trade, not a free capture)
+      • cp_loss <= -150  (position actually improves by 1.5 pawns or more — not just
+                         winning an undefended pawn and being slightly better)
+
+    This prevents Scholar's-Mate captures (Bxf7+), winning a free pawn, or any
+    recapture that nets material from ever being flagged brilliant.
 
     Returns: (category_key, label, symbol)
     """
-    # Book move: takes priority - shows it's a known opening/theoretical move
+    # Book move: highest priority
     if is_book_move:
         return 'book', MOVE_CATEGORIES['book']['label'], MOVE_CATEGORIES['book']['symbol']
-    
-    # Brilliant: sacrificing material for significant advantage (negative loss = gain)
-    if cp_loss < -50 and is_best_move:
+
+    # Brilliant: only genuine sacrifices that turn out to be the best move
+    # AND produce a large positional/tactical gain (>= 150 cp improvement).
+    if is_best_move and is_real_sacrifice and cp_loss <= -150:
         return 'brilliant', MOVE_CATEGORIES['brilliant']['label'], MOVE_CATEGORIES['brilliant']['symbol']
 
-    # Best move
-    if is_best_move and cp_loss >= -50:
+    # Best move (engine's top choice, not a sacrifice or gain small enough to be "just best")
+    if is_best_move:
         return 'best', MOVE_CATEGORIES['best']['label'], MOVE_CATEGORIES['best']['symbol']
 
     # Good move (small loss or slight gain, but not best)
@@ -1704,7 +2038,7 @@ def classify_move(cp_loss, is_best_move, is_book_move=False):
     # Blunder
     return 'blunder', MOVE_CATEGORIES['blunder']['label'], MOVE_CATEGORIES['blunder']['symbol']
 
-def analyze_game(san_log, engine_time=2.0, depth_limit=14):
+def analyze_game(san_log, engine_time=2.0, depth_limit=18):
     """
     Analyze a completed game move by move using engine.
     Returns list of dicts with move analysis including classification.
@@ -1712,73 +2046,108 @@ def analyze_game(san_log, engine_time=2.0, depth_limit=14):
     print("\n  Analyzing game... (this may take a moment)\n")
     tb   = Tablebase()
     book = OpeningBook()
-    eng  = Engine(tb=tb, book=None, strength=1.5)  # Stronger engine for analysis
+    eng  = Engine(tb=tb, book=None, strength=1.5)
+
+    # Centipawn values for sacrifice detection
+    _CP = {PAWN: 100, KNIGHT: 320, BISHOP: 330, ROOK: 500, QUEEN: 900, KING: 0}
 
     board = Board(); board.reset()
     results = []
 
-    # Get initial evaluation
-    prev_best, prev_score = eng.search_best(board, t_limit=engine_time, depth_limit=depth_limit)
+    # Get initial evaluation from the side-to-move's perspective
+    eng.tt.clear()
+    _, prev_score = eng.search_best(board, t_limit=engine_time, depth_limit=depth_limit)
+    # prev_score is always from the CURRENT side-to-move's perspective (positive = good for mover)
 
     for i, san in enumerate(san_log):
-        side = WHITE if i%2==0 else BLACK
+        side = WHITE if i % 2 == 0 else BLACK
         m = board.parse_san(san)
-        if m is None: break
+        if m is None:
+            break
 
-        # Check if move is in opening book BEFORE making the move
+        # ── Book check ────────────────────────────────────────────────────
         is_book_move = False
         if book:
             book_mv = book.pick(board)
-            is_book_move = (book_mv == m)
+            is_book_move = (book_mv is not None and book_mv == m)
 
-        # Score before the move (from current player's perspective)
-        score_before = prev_score
-        if side == BLACK:
-            score_before = -score_before
+        # ── Sacrifice detection ───────────────────────────────────────────
+        # A REAL sacrifice means the moving piece is worth MORE than what it
+        # captures (including the case of capturing nothing).
+        # This deliberately excludes:
+        #   • Winning a free piece  (captured_val >= mover_val)
+        #   • Taking an undefended pawn with a bishop (Bxf7 when pawn undefended)
+        #   • Any capture where you gain material
+        #
+        # We also require that the opponent CAN recapture after the move (i.e.
+        # the square is defended), so that "free captures" are never sacrifices.
+        is_real_sacrifice = False
+        mover_piece = board.sq[m.from_sq]
+        if mover_piece:
+            mover_val = _CP.get(mover_piece[1], 0)
+            captured_val = _CP.get(m.captured, 0) if m.captured is not None else 0
 
-        # Get best move at this position
+            if mover_val > 0 and mover_val > captured_val + 50:
+                # The mover is giving up more material than it captures.
+                # Now check: is the destination square defended by the opponent
+                # AFTER the move? (i.e. this is not just leaving a piece on a
+                # safe square, but genuinely going into danger.)
+                temp = board.copy()
+                temp._apply(m)
+                if temp.is_attacked(m.to_sq, 1 - side):
+                    is_real_sacrifice = True
+                # Also count pure piece drops (moving to undefended square) only
+                # if the mover is at least a rook (to avoid flagging N-manoeuvres)
+                elif mover_val >= _CP[ROOK] and captured_val == 0:
+                    # Moving a major piece somewhere it could be captured later
+                    # – too speculative; don't flag as sacrifice.
+                    pass
+
+        # ── Get best move BEFORE applying ─────────────────────────────────
         eng.tt.clear()
-        best_mv, best_score = eng.search_best(board, t_limit=engine_time, depth_limit=depth_limit)
+        best_mv, best_score_before = eng.search_best(
+            board, t_limit=engine_time, depth_limit=depth_limit)
         best_san_str = board.san(best_mv) if best_mv else '?'
-
-        # Check if played move is the best move
         is_best = (m == best_mv)
-        # Apply the move
+
+        # score_before: from the mover's perspective
+        score_before = prev_score  # already from side-to-move's perspective
+
+        # ── Apply move ────────────────────────────────────────────────────
         board.make(m)
         board.san_log.append(san)
 
-        # Get score after (from next player's perspective, so negate)
-        _, score_after_raw = eng.search_best(board, t_limit=engine_time*0.5, depth_limit=depth_limit//2)
+        # ── Evaluate AFTER ────────────────────────────────────────────────
+        eng.tt.clear()
+        _, score_after_opp = eng.search_best(
+            board, t_limit=engine_time * 0.6, depth_limit=depth_limit - 2)
+        # score_after_opp is from the NEW side-to-move's (opponent's) perspective.
+        # Flip to get it from the mover's perspective.
+        score_after_mover = -score_after_opp
 
-        # Calculate CP loss from the perspective of the player who moved
-        # Positive = bad (you lost advantage), Negative = good (you gained advantage)
-        if side == WHITE:
-            # White's perspective: higher score is better
-            score_after = -score_after_raw  # After move, it's black's turn, so negate
-            cp_loss = score_before - score_after
-        else:
-            # Black's perspective: lower score is better (negative for black advantage)
-            score_after = score_after_raw
-            cp_loss = (-score_before) - (-score_after)
+        # cp_loss: positive = mover lost ground, negative = mover gained ground
+        cp_loss = score_before - score_after_mover
 
-        # Classify the move (book moves take priority)
-        category, label, symbol = classify_move(cp_loss, is_best, is_book_move)
+        # ── Classify ──────────────────────────────────────────────────────
+        category, label, symbol = classify_move(
+            cp_loss, is_best, is_book_move, is_real_sacrifice)
 
         results.append({
-            'move_num': i//2+1,
-            'side': side,
-            'san': san,
+            'move_num': i // 2 + 1,
+            'side':     side,
+            'san':      san,
             'category': category,
-            'label': label,
-            'symbol': symbol,
-            'cp_loss': cp_loss,
-            'score': score_after_raw,
-            'best': best_san_str,
-            'is_best': is_best,
-            'is_book': is_book_move
+            'label':    label,
+            'symbol':   symbol,
+            'cp_loss':  cp_loss,
+            'score':    score_after_mover,
+            'best':     best_san_str,
+            'is_best':  is_best,
+            'is_book':  is_book_move,
         })
 
-        prev_score = score_after_raw
+        # prev_score for next iteration = opponent's perspective = score_after_opp
+        prev_score = score_after_opp
 
     return results
 
@@ -2223,23 +2592,46 @@ class ChessClient:
     """
 
     def __init__(self, host='localhost', port=65433):
+        """Initialize client with message routing."""
         self.host = host
         self.port = port
         self.sock = None
-        self.logged_in_user = None
         self.pending = b''
-        # E2E encryption session
+        self.logged_in_user = None
+        self.encryption_enabled = False
         self.session_key = None
         self.client_private = None
         self.client_public = None
-        self.encryption_enabled = False
         self._nonce_counter = 0
 
+        # Message routing - separate queues for sync and async messages
+        self._msg_lock = threading.Lock()
+        self._sync_queue = queue.Queue()  # For request/response
+        self._async_queue = queue.Queue()  # For async notifications
+        self._response_handlers = {}  # request_id -> queue
+        self._request_counter = 0
+
+        # Async message types - initialized in _init_async_types() after constants are defined
+        self.ASYNC_TYPES = set()
+
+        # Start background listener
+        self._listener_stop = threading.Event()
+        self._start_listener()
+
     def _derive_nonce(self):
-        """Derive a unique nonce for each message (12 bytes for GCM)."""
+        """Derive a unique nonce for each message (12 bytes for GCM).
+        
+        Uses a different nonce space than the server to avoid nonce reuse:
+        - Client uses nonces with bit 0 = 0 (even counter values)
+        - Server uses nonces with bit 0 = 1 (odd counter values)
+        """
         self._nonce_counter += 1
         # Pack counter as 8-byte big-endian, then pad to 12 bytes
-        return b'\x00\x00\x00\x00' + struct.pack('>Q', self._nonce_counter)
+        # Ensure the last bit is 0 to distinguish from server nonces
+        nonce_bytes = b'\x00\x00\x00\x00' + struct.pack('>Q', self._nonce_counter)
+        # Clear the last bit to distinguish from server nonces
+        nonce_bytes = nonce_bytes[:-1] + bytes([nonce_bytes[-1] & 0xFE])
+        return nonce_bytes
 
     def _encrypt_message(self, plaintext: bytes) -> bytes:
         """Encrypt a message using session key."""
@@ -2261,6 +2653,106 @@ class ChessClient:
         encrypted_data = ciphertext[13:-16]
         tag = ciphertext[-16:]
         return _gcm_decrypt(encrypted_data, self.session_key, nonce, tag)
+
+    # ════════════════════════════════════════════════════════════════════
+    #  MESSAGE ROUTING SYSTEM
+    # ════════════════════════════════════════════════════════════════════
+    def _init_async_types(self):
+        """Initialize async message types (called after constants are defined)."""
+        if not self.ASYNC_TYPES:  # Only initialize once
+            self.ASYNC_TYPES = {
+                MSG_MATCH, MSG_GAME_MOVE, MSG_GAME_RESIGN,
+                MSG_GAME_DRAW_OFFER, MSG_GAME_DRAW_ACCEPT, MSG_GAME_CHAT,
+                MSG_NEW_MESSAGE_NOTIFY, MSG_FRIEND_REQUEST, MSG_FRIEND_STATUS,
+                MSG_CHALLENGE_SEND
+            }
+
+    def _start_listener(self):
+        """Start background message listener thread."""
+        # Initialize async types before starting listener
+        self._init_async_types()
+
+        def listener_loop():
+            while not self._listener_stop.is_set():
+                try:
+                    msg = self._recv_raw(timeout=0.5)
+                    if msg:
+                        msg_type = msg.get('type', '')
+                        with self._msg_lock:
+                            # Route to appropriate handler
+                            if msg_type in self.ASYNC_TYPES:
+                                # Async notification - queue for main loop
+                                self._async_queue.put(msg)
+                            else:
+                                # Response type - queue for request handlers
+                                self._sync_queue.put(msg)
+                except:
+                    pass
+
+        self._listener_thread = threading.Thread(target=listener_loop, daemon=True)
+        self._listener_thread.start()
+
+    def _recv_raw(self, timeout=5.0):
+        """Raw receive - reads from socket and parses message."""
+        if not self.sock:
+            return None
+
+        self.sock.settimeout(timeout)
+        retries = 0
+        max_retries = 3
+
+        while retries < max_retries:
+            try:
+                if len(self.pending) >= 4:
+                    length = struct.unpack('>I', self.pending[:4])[0]
+                    if length > 10_000_000:
+                        self.pending = b''
+                        retries += 1
+                        continue
+                    if len(self.pending) >= 4 + length:
+                        payload = self.pending[4:4 + length]
+                        self.pending = self.pending[4 + length:]
+                        if self.encryption_enabled and self.session_key and payload[0:1] == b'E':
+                            payload = self._decrypt_message(payload)
+                        return json.loads(payload.decode())
+
+                try:
+                    chunk = self.sock.recv(4096)
+                    if not chunk:
+                        return None
+                    self.pending += chunk
+                    continue
+                except socket.timeout:
+                    if len(self.pending) == 0:
+                        retries += 1
+                    continue
+
+            except Exception:
+                retries += 1
+                continue
+
+        return None
+
+    def recv(self, timeout=5.0):
+        """Receive a message (used by background listener)."""
+        try:
+            return self._async_queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def recv_sync(self, timeout=10.0):
+        """
+        Receive a synchronous response (for request/response pattern).
+        Waits for a non-async message type.
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                msg = self._sync_queue.get(timeout=0.5)
+                return msg
+            except queue.Empty:
+                continue
+        return None
 
     def connect(self):
         """Connect to the server."""
@@ -3264,7 +3756,7 @@ def list_all_users():
     if ChessClient is None:
         print("  Client not available")
         return
-    
+
     # Check offline mode first
     if _offline_mode:
         print("\n  ╔══════════════════════════════════════════════════════════╗")
@@ -3276,7 +3768,12 @@ def list_all_users():
         print("  ║  3. Make sure the server is running                      ║")
         print("  ╚══════════════════════════════════════════════════════════╝")
         return
-    
+
+    # Check if user is logged in
+    if not _current_user:
+        print("  You must be logged in to view the user list.")
+        return
+
     # Connect to server if not already connected
     if _server_client is None or _server_client.sock is None:
         success, msg = connect_to_server()
@@ -3284,22 +3781,35 @@ def list_all_users():
             print(f"  Cannot connect to server: {msg}")
             print("  Make sure the server is running: python3 server.py")
             return
+    
+    # Ensure we're logged in on the server
+    if not _server_client.logged_in_user:
+        print("  Logging in to server...")
+        saved_user, saved_password = _load_credentials()
+        if saved_user == _current_user and saved_password:
+            login_resp = _server_client.login(_current_user, saved_password, use_encryption=True)
+            if not (login_resp and login_resp.get('success')):
+                print("  Failed to login to server. Please login again from main menu.")
+                return
+        else:
+            print("  No saved credentials. Please login again from main menu.")
+            return
 
     response = _server_client.list_users()
     if response is None:
         print("  No response from server. Connection may have timed out.")
         print("  Make sure the server is running and you have a stable connection.")
         return
-    
+
     if not response.get('success'):
-        print("  Failed to get user list")
+        print(f"  Failed to get user list: {response.get('data', 'Unknown error')}")
         return
-    
+
     users = response.get('data', [])
     print("\n  ╔══════════════════════════════════════════════════════════╗")
     print(f"  ║  REGISTERED USERS ({len(users)}):{'':35}║")
     print("  ╚══════════════════════════════════════════════════════════╝")
-    
+
     if not users:
         print("    No registered users yet.")
     else:
@@ -3418,6 +3928,11 @@ def view_friends_list():
     print("  ║              YOUR FRIENDS                                ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
 
+    # Check if user is logged in
+    if not _current_user:
+        print("  You must be logged in to view friends.")
+        return
+
     # Check if client is connected
     if not _server_client or not _server_client.sock:
         print("  Not connected to server. Please connect first.")
@@ -3425,23 +3940,36 @@ def view_friends_list():
         if not success:
             print(f"  {msg}")
             return
+    
+    # Ensure we're logged in on the server
+    if not _server_client.logged_in_user:
+        print("  Logging in to server...")
+        saved_user, saved_password = _load_credentials()
+        if saved_user == _current_user and saved_password:
+            login_resp = _server_client.login(_current_user, saved_password, use_encryption=True)
+            if not (login_resp and login_resp.get('success')):
+                print("  Failed to login to server. Please login again from main menu.")
+                return
+        else:
+            print("  No saved credentials. Please login again from main menu.")
+            return
 
     response = _server_client.get_friend_list()
     if not response or not response.get('success'):
         print(f"  Error: {response.get('data', 'Unknown error') if response else 'No response'}")
         return
-    
+
     friends = response.get('data', {}).get('friends', [])
     if not friends:
         print("  You don't have any friends yet. Add some!")
         return
-    
+
     print(f"  {'Username':<20} {'Status':<10}")
     print("  " + "-" * 30)
     for friend in friends:
         status = "Online" if friend.get('online') else "Offline"
         print(f"  {friend['username']:<20} {status:<10}")
-    
+
     print("\n  Actions:")
     print("  M - Message a friend")
     print("  C - Challenge a friend")
@@ -3504,6 +4032,11 @@ def add_friend():
     print("  ║              ADD FRIEND                                  ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
 
+    # Check if user is logged in
+    if not _current_user:
+        print("  You must be logged in to add friends.")
+        return
+
     # First show list of users
     # Check if client is connected
     if not _server_client or not _server_client.sock:
@@ -3513,25 +4046,39 @@ def add_friend():
             print(f"  {msg}")
             return
     
+    # Ensure we're logged in on the server
+    if not _server_client.logged_in_user:
+        print("  Logging in to server...")
+        saved_user, saved_password = _load_credentials()
+        if saved_user == _current_user and saved_password:
+            login_resp = _server_client.login(_current_user, saved_password, use_encryption=True)
+            if not (login_resp and login_resp.get('success')):
+                print("  Failed to login to server. Please login again from main menu.")
+                return
+        else:
+            print("  No saved credentials. Please login again from main menu.")
+            return
+
     response = _server_client.list_users()
     if not response or not response.get('success'):
         print("  Could not fetch user list.")
-        print(f"  Debug: response={response}")
+        if response:
+            print(f"  Error: {response.get('data', 'Unknown error')}")
         return
-    
+
     users = response.get('data', [])
     print("  Registered users:")
     for user in sorted(users):
         if user != _current_user:
             print(f"    • {user}")
-    
+
     friend_name = input("\n  Username to add: ").strip()
     if not friend_name:
         return
     if friend_name == _current_user:
         print("  Cannot add yourself as a friend!")
         return
-    
+
     response = _server_client.send_friend_request(friend_name)
     if response and response.get('success'):
         print(f"  Friend request sent to {friend_name}!")
@@ -3544,6 +4091,11 @@ def friend_requests_menu():
     print("  ║           FRIEND REQUESTS                                ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
 
+    # Check if user is logged in
+    if not _current_user:
+        print("  You must be logged in to view friend requests.")
+        return
+
     # Check if client is connected
     if not _server_client or not _server_client.sock:
         print("  Not connected to server. Please connect first.")
@@ -3551,31 +4103,44 @@ def friend_requests_menu():
         if not success:
             print(f"  {msg}")
             return
+    
+    # Ensure we're logged in on the server
+    if not _server_client.logged_in_user:
+        print("  Logging in to server...")
+        saved_user, saved_password = _load_credentials()
+        if saved_user == _current_user and saved_password:
+            login_resp = _server_client.login(_current_user, saved_password, use_encryption=True)
+            if not (login_resp and login_resp.get('success')):
+                print("  Failed to login to server. Please login again from main menu.")
+                return
+        else:
+            print("  No saved credentials. Please login again from main menu.")
+            return
 
     response = _server_client.get_friend_requests()
     if not response or not response.get('success'):
         print(f"  Error: {response.get('data', 'Unknown error') if response else 'No response'}")
         return
-    
+
     requests = response.get('data', {}).get('requests', [])
     if not requests:
         print("  No pending friend requests.")
         return
-    
+
     print("  Pending requests:")
     for i, req in enumerate(requests, 1):
         print(f"  {i}. From: {req['sender']}")
-    
+
     print("\n  Enter request number to respond, or 0 to cancel:")
-    
+
     try:
         choice = input("  Choice: ").strip()
     except EOFError:
         return
-    
+
     if choice == '0':
         return
-    
+
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(requests):
@@ -3601,32 +4166,58 @@ def messages_menu():
     print("\n  ╔══════════════════════════════════════════════════════════╗")
     print("  ║              MESSAGES                                    ║")
     print("  ╚══════════════════════════════════════════════════════════╝")
+
+    # Check if user is logged in
+    if not _current_user:
+        print("  You must be logged in to view messages.")
+        return
+
+    # Check if client is connected
+    if not _server_client or not _server_client.sock:
+        print("  Not connected to server. Please connect first.")
+        success, msg = connect_to_server()
+        if not success:
+            print(f"  {msg}")
+            return
     
+    # Ensure we're logged in on the server
+    if not _server_client.logged_in_user:
+        print("  Logging in to server...")
+        saved_user, saved_password = _load_credentials()
+        if saved_user == _current_user and saved_password:
+            login_resp = _server_client.login(_current_user, saved_password, use_encryption=True)
+            if not (login_resp and login_resp.get('success')):
+                print("  Failed to login to server. Please login again from main menu.")
+                return
+        else:
+            print("  No saved credentials. Please login again from main menu.")
+            return
+
     # Get friends list
     response = _server_client.get_friend_list()
     if not response or not response.get('success'):
         print("  Could not fetch friends list.")
         return
-    
+
     friends = response.get('data', {}).get('friends', [])
     if not friends:
         print("  You need friends before you can send messages!")
         return
-    
+
     print("  Friends you can message:")
     for i, friend in enumerate(friends, 1):
         print(f"  {i}. {friend['username']}")
-    
+
     print("\n  Enter friend number to view messages, or 0 to cancel:")
-    
+
     try:
         choice = input("  Choice: ").strip()
     except EOFError:
         return
-    
+
     if choice == '0':
         return
-    
+
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(friends):
@@ -5077,6 +5668,7 @@ MAIN_MENU_ONLINE = """
   │  7. Game Analysis (Online)      │
   │  8. Friends & Messaging         │
   │  9. Configure Server            │
+  │  L. Learn an Opening            │
   │  0. Enable Offline Mode         │
   │  Q. Quit                        │
   └─────────────────────────────────┘
@@ -5095,12 +5687,457 @@ MAIN_MENU_OFFLINE = """
   │  7. Game Analysis (Online)      │
   │  8. Friends & Messaging [OFFLINE]│
   │  9. Configure Server            │
+  │  L. Learn an Opening            │
   │  0. Enable Online Mode          │
   │  Q. Quit                        │
   └─────────────────────────────────┘
 """
 
-def analyze_pgn_line():
+def learn_opening():
+    """
+    Interactive opening trainer.
+    Shows a catalogue of named openings, lets the player pick one, then
+    walks through the main line and branches interactively.
+    """
+    # ── Opening catalogue ─────────────────────────────────────────────────
+    # Each entry: (display_name, list_of_lines)
+    # Each line is a dict: {name, moves_str, description}
+    OPENINGS = [
+        # ── e4 ────────────────────────────────────────────────────────────
+        ("Ruy Lopez / Spanish", [
+            {"name": "Main Line (Morphy)",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O",
+             "desc": "The most classical opening. White fianchettos the bishop and aims for a powerful centre."},
+            {"name": "Berlin Defence",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 Nf6 O-O Nxe4 d4 Nd6 Bxc6 dxc6 dxe5 Nf5",
+             "desc": "Solid and drawish. Black trades pawns for activity. Loved by world champions."},
+            {"name": "Exchange Variation",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Bxc6 dxc6 O-O f6 d4 exd4 Nxd4",
+             "desc": "White accepts doubled pawns for Black, then seeks a structural advantage."},
+            {"name": "Marshall Attack",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 O-O c3 d5",
+             "desc": "A pawn sacrifice by Black that leads to a fierce attack against White's king."},
+            {"name": "Schliemann Gambit",
+             "moves": "e4 e5 Nf3 Nc6 Bb5 f5 Nc3 fxe4 Nxe4 d5",
+             "desc": "An aggressive counter-gambit. Black stakes everything on an early attack."},
+        ]),
+        ("Italian / Giuoco Piano", [
+            {"name": "Giuoco Piano",
+             "moves": "e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d4 exd4 cxd4 Bb4+ Nc3 Nxe4",
+             "desc": "White builds a strong centre. One of the oldest and most popular openings."},
+            {"name": "Two Knights",
+             "moves": "e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Na5 Bb5+ c6 dxc6 bxc6 Be2 h6 Nf3",
+             "desc": "Black allows Ng5, inviting tactical complications with …d5."},
+            {"name": "Fried Liver Attack",
+             "moves": "e4 e5 Nf3 Nc6 Bc4 Nf6 Ng5 d5 exd5 Nxd5 Nxf7 Kxf7 Qf3+",
+             "desc": "White sacrifices a knight on f7 for a fierce king-hunt. Fun but risky!"},
+            {"name": "Slow Italian",
+             "moves": "e4 e5 Nf3 Nc6 Bc4 Bc5 d3 Nf6 c3 a6 Bb3 d6 Nbd2 O-O",
+             "desc": "A patient approach. White builds slowly and avoids early complications."},
+        ]),
+        ("Scotch Game", [
+            {"name": "Scotch Game",
+             "moves": "e4 e5 Nf3 Nc6 d4 exd4 Nxd4 Nf6 Nxc6 bxc6 e5 Qe7 Qe2 Nd5 c4",
+             "desc": "White opens the centre immediately. Popular at the top level."},
+            {"name": "Scotch Gambit",
+             "moves": "e4 e5 Nf3 Nc6 d4 exd4 Bc4 Bc5 c3 Nf6 e5 d5 Bb5 Ne4 cxd4",
+             "desc": "White sacrifices a pawn for quick development and attacking chances."},
+            {"name": "Göring Gambit",
+             "moves": "e4 e5 Nf3 Nc6 d4 exd4 c3 dxc3 Bc4 cxb2 Bxb2",
+             "desc": "A double pawn sacrifice for massive compensation in development."},
+        ]),
+        ("King's Gambit", [
+            {"name": "King's Gambit Accepted (Classical)",
+             "moves": "e4 e5 f4 exf4 Nf3 g5 Bc4 g4 O-O gxf3 Qxf3",
+             "desc": "White sacrifices a pawn for fast development and an attack. A romantic opening."},
+            {"name": "King's Gambit Accepted (Modern)",
+             "moves": "e4 e5 f4 exf4 Nf3 d6 d4 g5 h4 g4 Ng5 Nh6",
+             "desc": "Black tries to hold the extra pawn. White has the centre and open lines."},
+            {"name": "King's Gambit Declined (Falkbeer)",
+             "moves": "e4 e5 f4 d5 exd5 e4 d3 Nf6 dxe4 Nxe4 Nf3 Bc5 Qe2",
+             "desc": "Black counter-attacks in the centre rather than accepting the gambit."},
+        ]),
+        ("Sicilian Defence", [
+            {"name": "Najdorf",
+             "moves": "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 a6 Be3 e5 Nb3 Be6 f3 Be7 Qd2 O-O g4",
+             "desc": "The sharpest Sicilian. Black prepares …b5 and counterplay on the queenside."},
+            {"name": "Sicilian Dragon",
+             "moves": "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 g6 Be3 Bg7 f3 Nc6 Qd2 O-O O-O-O d5",
+             "desc": "A volcanic battle. White attacks on the kingside, Black on the queenside."},
+            {"name": "Sicilian Scheveningen",
+             "moves": "e4 c5 Nf3 d6 d4 cxd4 Nxd4 Nf6 Nc3 e6 Be2 Be7 O-O O-O f4 Nc6",
+             "desc": "Solid and flexible. Black keeps the centre under control."},
+            {"name": "Sicilian Sveshnikov",
+             "moves": "e4 c5 Nf3 Nc6 d4 cxd4 Nxd4 Nf6 Nc3 e5 Ndb5 d6 Bg5 a6 Na3 b5 Bxf6 gxf6 Nd5",
+             "desc": "Black accepts weaknesses for active piece play and the bishop pair."},
+            {"name": "Sicilian Kan / English Attack",
+             "moves": "e4 c5 Nf3 e6 d4 cxd4 Nxd4 a6 Nc3 Qc7 Be2 Nf6 O-O Nc6 Be3 Be7 f4",
+             "desc": "A flexible Sicilian. Black delays commitment and keeps many options."},
+            {"name": "Alapin (c3 Sicilian)",
+             "moves": "e4 c5 c3 Nf6 e5 Nd5 d4 cxd4 Nf3 Nc6 cxd4 d6 Bc4 Nb6 Bb3",
+             "desc": "White avoids theory. The c3-d4 centre is solid but Black can equalise."},
+        ]),
+        ("Caro-Kann", [
+            {"name": "Classical",
+             "moves": "e4 c6 d4 d5 Nc3 dxe4 Nxe4 Bf5 Ng3 Bg6 h4 h6 Nf3 Nd7 h5 Bh7 Bd3 Bxd3 Qxd3",
+             "desc": "Solid and classical. Black gets a solid structure at the cost of passive play."},
+            {"name": "Advance Variation",
+             "moves": "e4 c6 d4 d5 e5 Bf5 Nf3 e6 Be2 Nd7 O-O Bg6 Nbd2 Ne7 Nb3 Nf5",
+             "desc": "White grabs space. Black needs to find the right moment to break with …c5."},
+            {"name": "Exchange Variation",
+             "moves": "e4 c6 d4 d5 exd5 cxd5 Bd3 Nf6 c3 Nc6 Nf3 Bg4 Nbd2 e6 h3",
+             "desc": "Symmetrical pawn structure. An interesting endgame-oriented choice."},
+            {"name": "Panov-Botvinnik Attack",
+             "moves": "e4 c6 d4 d5 exd5 cxd5 c4 Nf6 Nc3 e6 Nf3 Bb4 cxd5 Nxd5 Bd2 Nc6",
+             "desc": "An IQP structure arises. White gets dynamic piece play and active prospects."},
+        ]),
+        ("French Defence", [
+            {"name": "Classical Variation",
+             "moves": "e4 e6 d4 d5 Nc3 Nf6 Bg5 Be7 e5 Nfd7 Bxe7 Qxe7 f4 O-O Nf3 c5",
+             "desc": "Black builds a solid pawn chain. White's space must be used actively."},
+            {"name": "Winawer Variation",
+             "moves": "e4 e6 d4 d5 Nc3 Bb4 e5 c5 a3 Bxc3+ bxc3 Ne7 Qg4 Qc7 Qxg7 Rg8",
+             "desc": "Sharp and imbalanced. Black pins White's knight; White attacks the kingside."},
+            {"name": "Tarrasch Variation",
+             "moves": "e4 e6 d4 d5 Nd2 c5 Ngf3 Nc6 exd5 exd5 Bb5 Bd6 dxc5 Bxc5 O-O Nge7",
+             "desc": "White avoids the Winawer pin. A solid but ambitious approach."},
+            {"name": "Advance Variation",
+             "moves": "e4 e6 d4 d5 e5 c5 c3 Qb6 Nf3 Nc6 Be2 cxd4 cxd4 Nh6 Nc3 Nf5",
+             "desc": "White clamps the centre immediately. A popular system at all levels."},
+        ]),
+        ("Queen's Gambit", [
+            {"name": "QGD Orthodox",
+             "moves": "d4 d5 c4 e6 Nc3 Nf6 Bg5 Be7 e3 O-O Nf3 h6 Bh4 b6 cxd5 Nxd5 Bxe7 Qxe7",
+             "desc": "The most solid defence. Black builds a rock-solid structure."},
+            {"name": "Queen's Gambit Accepted",
+             "moves": "d4 d5 c4 dxc4 Nf3 Nf6 e3 e6 Bxc4 c5 O-O a6 Qe2 b5 Bd3 Bb7",
+             "desc": "Black accepts the pawn and aims to equalise with active piece play."},
+            {"name": "Slav Defence",
+             "moves": "d4 d5 c4 c6 Nf3 Nf6 Nc3 dxc4 a4 Bf5 e3 e6 Bxc4 Bb4 O-O Nbd7",
+             "desc": "Black supports d5 with c6. Solid and popular at the highest levels."},
+            {"name": "Semi-Slav / Meran",
+             "moves": "d4 d5 c4 c6 Nc3 Nf6 Nf3 e6 e3 Nbd7 Bd3 dxc4 Bxc4 b5 Bd3 a6 e4",
+             "desc": "One of the most dynamically complex openings. Sharp pawn play."},
+            {"name": "Catalan",
+             "moves": "d4 d5 c4 e6 g3 Nf6 Bg2 Be7 Nf3 O-O O-O dxc4 Qc2 a6 Qxc4 b5 Qc2 Bb7",
+             "desc": "White puts the bishop on g2 for long-term pressure. A modern classic."},
+        ]),
+        ("Nimzo-Indian Defence", [
+            {"name": "Rubinstein (e3)",
+             "moves": "d4 Nf6 c4 e6 Nc3 Bb4 e3 O-O Bd3 d5 Nf3 c5 O-O Nc6 a3 Bxc3 bxc3",
+             "desc": "Solid and classical. White accepts the bishop pair and targets the centre."},
+            {"name": "Kasparov Variation (g3)",
+             "moves": "d4 Nf6 c4 e6 Nc3 Bb4 g3 O-O Bg2 d5 Nf3 dxc4 O-O Nc6 Qc2 Bxc3 Qxc3 b5",
+             "desc": "White fianchettos the bishop. A dynamic system Kasparov used with success."},
+            {"name": "Sämisch (f3)",
+             "moves": "d4 Nf6 c4 e6 Nc3 Bb4 f3 d5 a3 Bxc3+ bxc3 c5 cxd5 exd5 e3 O-O",
+             "desc": "White wants to build a huge centre, but Black gets active counterplay."},
+            {"name": "Classical (Nf3)",
+             "moves": "d4 Nf6 c4 e6 Nc3 Bb4 Nf3 c5 g3 cxd4 Nxd4 O-O Bg2 d5 Qb3 Bxc3+ bxc3",
+             "desc": "A rich middlegame structure with many imbalances."},
+        ]),
+        ("King's Indian Defence", [
+            {"name": "Classical / Main Line",
+             "moves": "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Nf3 O-O Be2 e5 O-O Nc6 d5 Ne7 Ne1 Nd7",
+             "desc": "One of the sharpest double-edged openings. Both sides attack on opposite wings."},
+            {"name": "Sämisch Attack",
+             "moves": "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f3 O-O Be3 e5 d5 Nh5 Qd2 f5 O-O-O",
+             "desc": "White builds a massive centre and storms the kingside."},
+            {"name": "Four Pawns Attack",
+             "moves": "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 f4 O-O Nf3 c5 dxc5 Qa5 Bd3 Qxc5 Qe2",
+             "desc": "An aggressive attempt to overwhelm Black with four pawns in the centre."},
+            {"name": "Averbakh Variation",
+             "moves": "d4 Nf6 c4 g6 Nc3 Bg7 e4 d6 Be2 O-O Bg5 c5 d5 h6 Bh4 g5 Bg3 Nh5",
+             "desc": "White develops the bishop to g5 early, aiming for positional pressure."},
+            {"name": "Fianchetto Variation",
+             "moves": "d4 Nf6 c4 g6 g3 Bg7 Bg2 d6 Nc3 O-O Nf3 Nbd7 O-O e5 e4 exd4 Nxd4",
+             "desc": "A positional approach. White mirrors Black's fianchetto."},
+        ]),
+        ("Dutch Defence", [
+            {"name": "Stonewall",
+             "moves": "d4 f5 c4 Nf6 g3 e6 Bg2 d5 Nf3 c6 O-O Bd6 b3 Qe7 Ne5",
+             "desc": "Black builds an impregnable fortress. Slow but very solid."},
+            {"name": "Leningrad",
+             "moves": "d4 f5 Nf3 Nf6 g3 g6 Bg2 Bg7 O-O O-O c4 d6 Nc3 Qe8 d5 Na6",
+             "desc": "Dynamic and aggressive. Black prepares a kingside attack with the Bg7."},
+            {"name": "Classical Dutch",
+             "moves": "d4 f5 c4 e6 Nf3 Nf6 Nc3 Bb4 Qc2 O-O a3 Bxc3+ Qxc3 b6 g3 Bb7 Bg2",
+             "desc": "A solid try avoiding the Stonewall pawn structure."},
+        ]),
+        ("Grünfeld Defence", [
+            {"name": "Exchange Variation",
+             "moves": "d4 Nf6 c4 g6 Nc3 d5 cxd5 Nxd5 e4 Nxc3 bxc3 Bg7 Bc4 c5 Ne2 Nc6 Be3 O-O",
+             "desc": "Black allows White a big centre, then attacks it with pieces."},
+            {"name": "Russian System",
+             "moves": "d4 Nf6 c4 g6 Nc3 d5 Nf3 Bg7 Qb3 dxc4 Qxc4 O-O e4 a6 e5 b5 Qb3 Nc6",
+             "desc": "White takes the pawn with the queen and maintains central tension."},
+            {"name": "Neo-Grünfeld",
+             "moves": "d4 Nf6 c4 g6 Nc3 d5 Bf4 Bg7 e3 O-O Rc1 dxc4 Bxc4 c5 dxc5 Qa5 Nge2 Nbd7",
+             "desc": "A solid system avoiding the sharp Exchange variation."},
+        ]),
+        ("L*ndon System", [
+            {"name": "L*ndon System",
+             "moves": "d4 d5 Bf4 Nf6 e3 e6 Nd2 c5 c3 Nc6 Ngf3 Bd6 Bg3 O-O Bd3",
+             "desc": "A solid, low-theory system. White develops naturally and attacks on the kingside."},
+            {"name": "London vs KID setup",
+             "moves": "d4 Nf6 Bf4 e6 e3 d5 Nf3 c5 c3 Nc6 Nbd2 Bd6 Bg3 O-O Bd3",
+             "desc": "The same idea against the King's Indian setup."},
+        ]),
+        ("Benoni Defence", [
+            {"name": "Modern Benoni",
+             "moves": "d4 Nf6 c4 c5 d5 e6 Nc3 exd5 cxd5 d6 Nf3 g6 Bg2 Bg7 O-O O-O a4 a6",
+             "desc": "Black sacrifices a pawn to gain dynamic counterplay on the queenside."},
+            {"name": "Benko Gambit",
+             "moves": "d4 Nf6 c4 c5 d5 b5 cxb5 a6 bxa6 Bxa6 Nc3 d6 Nf3 g6 g3 Bg7 Bg2 O-O O-O Nbd7",
+             "desc": "Black sacrifices two pawns for long-term queenside pressure."},
+        ]),
+    ]
+
+    # ── Display opening catalogue ─────────────────────────────────────────
+    while True:
+        print("\n  ╔══════════════════════════════════════════════════════════╗")
+        print("  ║              OPENING TRAINER                             ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        print("  ║  Study master-level openings interactively.              ║")
+        print("  ║  You play moves, the trainer shows variations & ideas.   ║")
+        print("  ╠══════════════════════════════════════════════════════════╣")
+        for i, (name, _) in enumerate(OPENINGS, 1):
+            print(f"  ║  {i:>2}. {name:<50}║")
+        print("  ║   0. Back to main menu                                   ║")
+        print("  ╚══════════════════════════════════════════════════════════╝")
+
+        try:
+            choice = input("  Select opening: ").strip()
+        except EOFError:
+            return
+        if choice == '0':
+            return
+        try:
+            idx = int(choice) - 1
+            if not (0 <= idx < len(OPENINGS)):
+                print("  Invalid choice.")
+                continue
+        except ValueError:
+            print("  Invalid choice.")
+            continue
+
+        opening_name, lines = OPENINGS[idx]
+        _learn_opening_lines(opening_name, lines)
+
+
+def _learn_opening_lines(opening_name, lines):
+    """Show available lines for an opening, then start the trainer."""
+    while True:
+        print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+        print(f"  ║  {opening_name:<56}║")
+        print(f"  ╠══════════════════════════════════════════════════════════╣")
+        for i, line in enumerate(lines, 1):
+            desc_short = line['desc'][:48]
+            print(f"  ║  {i}. {line['name']:<52}║")
+            print(f"  ║     {desc_short:<54}║")
+        print(f"  ║   0. Back                                                ║")
+        print(f"  ╚══════════════════════════════════════════════════════════╝")
+
+        try:
+            choice = input("  Select line: ").strip()
+        except EOFError:
+            return
+        if choice == '0':
+            return
+        try:
+            idx = int(choice) - 1
+            if not (0 <= idx < len(lines)):
+                print("  Invalid choice.")
+                continue
+        except ValueError:
+            print("  Invalid choice.")
+            continue
+
+        line = lines[idx]
+        _run_opening_trainer(opening_name, line)
+
+
+def _run_opening_trainer(opening_name, line):
+    """
+    Interactive opening trainer for a single line.
+    Modes:
+      • DEMO  – play through the line move by move with commentary
+      • DRILL – you enter the moves; the trainer corrects mistakes
+    """
+    moves_str = line['moves']
+    desc = line['desc']
+    san_sequence = moves_str.split()
+
+    print(f"\n  ╔══════════════════════════════════════════════════════════╗")
+    print(f"  ║  {line['name']:<56}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    # Word-wrap description
+    words = desc.split()
+    row = "  ║  "
+    for w in words:
+        if len(row) + len(w) + 1 > 59:
+            print(f"{row:<59}║")
+            row = "  ║  " + w
+        else:
+            row += (" " if row != "  ║  " else "") + w
+    if row.strip():
+        print(f"{row:<59}║")
+    print(f"  ╠══════════════════════════════════════════════════════════╣")
+    print(f"  ║  1. Demo (watch the line)                                ║")
+    print(f"  ║  2. Drill as White (enter White's moves)                 ║")
+    print(f"  ║  3. Drill as Black (enter Black's moves)                 ║")
+    print(f"  ║  0. Back                                                 ║")
+    print(f"  ╚══════════════════════════════════════════════════════════╝")
+
+    try:
+        mode = input("  Mode: ").strip()
+    except EOFError:
+        return
+    if mode == '0':
+        return
+    if mode not in ('1', '2', '3'):
+        print("  Invalid mode.")
+        return
+
+    persp = WHITE
+    if mode == '3':
+        persp = BLACK
+
+    board = Board(); board.reset()
+    last_mv = None
+
+    if mode == '1':
+        # ── Demo mode ─────────────────────────────────────────────────────
+        print("\n  Playing through the line. Press Enter to advance, 'q' to quit.\n")
+        for i, san in enumerate(san_sequence):
+            m = board.parse_san(san)
+            if m is None:
+                print(f"  [Error: could not parse '{san}' — stopping.]")
+                break
+            side_str = "White" if board.side == WHITE else "Black"
+            move_num = board.fullmove
+            # Show board BEFORE the move
+            draw_board(board, persp, last_mv)
+            notation = f"{move_num}." if board.side == WHITE else f"{move_num}..."
+            # Pause
+            try:
+                inp = input(f"  {notation} {san} ({side_str})  [Enter to play, q to quit]: ").strip().lower()
+            except EOFError:
+                break
+            if inp == 'q':
+                break
+            sn = board.san(m)
+            board.make(m)
+            board.san_log.append(sn)
+            last_mv = m
+            print(f"  ✓ {notation} {sn}\n")
+
+        # Show final position
+        draw_board(board, persp, last_mv)
+        print(f"  End of line. Full sequence: {' '.join(board.san_log)}")
+        try:
+            input("  Press Enter to continue...")
+        except EOFError:
+            pass
+
+    else:
+        # ── Drill mode ─────────────────────────────────────────────────────
+        drill_color = WHITE if mode == '2' else BLACK
+        color_str = "White" if drill_color == WHITE else "Black"
+        print(f"\n  DRILL MODE — you play {color_str}.")
+        print("  Enter moves in SAN (e.g. 'e4', 'Nf3', 'O-O').")
+        print("  Type 'hint' for a hint, 'show' to see the board, 'q' to quit.\n")
+
+        errors = 0
+        total_your_moves = 0
+        for i, san in enumerate(san_sequence):
+            m = board.parse_san(san)
+            if m is None:
+                break
+
+            is_your_turn = (board.side == drill_color)
+            move_num = board.fullmove
+            notation = f"{move_num}." if board.side == WHITE else f"{move_num}..."
+
+            draw_board(board, persp, last_mv)
+
+            if is_your_turn:
+                total_your_moves += 1
+                # Player must find the correct move
+                attempts = 0
+                while True:
+                    try:
+                        raw = input(f"  Your move ({notation} ?): ").strip()
+                    except EOFError:
+                        return
+                    if raw.lower() == 'q':
+                        _show_drill_result(total_your_moves, errors)
+                        return
+                    if raw.lower() == 'hint':
+                        # Give first letter of the move
+                        hint = san[0] if san else '?'
+                        print(f"  Hint: the move starts with '{hint}'")
+                        continue
+                    if raw.lower() == 'show':
+                        draw_board(board, persp, last_mv)
+                        continue
+
+                    player_m = board.parse_san(raw)
+                    if player_m is None:
+                        print(f"  Illegal or unrecognised: '{raw}'. Try again.")
+                        continue
+
+                    if player_m == m:
+                        sn = board.san(m)
+                        board.make(m)
+                        board.san_log.append(sn)
+                        last_mv = m
+                        print(f"  ✓ Correct! {notation} {sn}\n")
+                        break
+                    else:
+                        attempts += 1
+                        if attempts == 1:
+                            print(f"  ✗ Not quite. Try again (type 'hint' for help).")
+                        else:
+                            # After 2 wrong answers, reveal the correct move
+                            errors += 1
+                            sn = board.san(m)
+                            print(f"  ✗ The correct move was {notation} {sn}.")
+                            board.make(m)
+                            board.san_log.append(sn)
+                            last_mv = m
+                            break
+            else:
+                # Trainer plays the other side
+                sn = board.san(m)
+                board.make(m)
+                board.san_log.append(sn)
+                last_mv = m
+                print(f"  Trainer plays: {notation} {sn}\n")
+
+        # Show final position
+        draw_board(board, persp, last_mv)
+        print(f"\n  Line complete! Full sequence: {' '.join(board.san_log)}")
+        _show_drill_result(total_your_moves, errors)
+        try:
+            input("  Press Enter to continue...")
+        except EOFError:
+            pass
+
+
+def _show_drill_result(total, errors):
+    """Print drill score."""
+    correct = total - errors
+    pct = int(correct / total * 100) if total > 0 else 0
+    grade = "Excellent! 🏆" if pct == 100 else ("Good job! 👍" if pct >= 70 else "Keep practising! 📚")
+    print(f"\n  ─── Drill Result ───────────────────────────────")
+    print(f"  Moves played:  {total}")
+    print(f"  Correct:       {correct} / {total}  ({pct}%)")
+    print(f"  {grade}")
+    print(f"  ────────────────────────────────────────────────")
+
+
+
     """Analyze a manually-entered sequence of moves."""
     print("\n  Enter moves separated by spaces (SAN format).")
     print("  Example: e4 e5 Nf3 Nc6 Bb5")
@@ -5289,6 +6326,9 @@ def main():
 
         elif choice=='9':
             configure_server_connection()
+
+        elif choice in ('l', 'L'):
+            learn_opening()
 
         elif choice=='0':
             # Toggle offline mode
